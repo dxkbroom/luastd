@@ -144,8 +144,8 @@ core.set_runner(function (handle, body)
     finish(handle, result)
 end)
 
-local function run_scope(kind, body, ms, coroutine_name)
-    local handle = core.enter(kind, coroutine_name)
+local function run_scope(kind, body, ms, coroutine_name, parent)
+    local handle = core.enter(kind, coroutine_name, parent)
     if ms then core.timeout(handle, ms) end
     local result = pack(raw_pcall(body, wrap_scope(handle)))
     local status, err = finish(handle, result)
@@ -162,14 +162,33 @@ local function run_scope(kind, body, ms, coroutine_name)
     raise_cancelled()
 end
 
-function Scope:launch(body)
-    check_fn(body, 1, "launch")
-    return wrap_job(core.spawn(self._handle, "launch", body))
+local function launch_arguments(context_or_body, body, name)
+    if body == nil then
+        check_fn(context_or_body, 1, name)
+        return nil, context_or_body
+    end
+    if getmetatable(context_or_body) ~= CoroutineContext then
+        error(new_error("InvalidArgument", ("bad argument #1 to '%s' (CoroutineContext expected)"):format(name)), 3)
+    end
+    check_fn(body, 2, name)
+    return coroutine_contexts[context_or_body], body
+end
+
+local function launch(parent, context, body)
+    local elements = context or {}
+    local job = elements.job
+    return wrap_job(core.spawn(job and job._handle or parent, "launch", body, elements.name))
+end
+
+function Scope:launch(context_or_body, body)
+    local context
+    context, body = launch_arguments(context_or_body, body, "launch")
+    return launch(self._handle, context, body)
 end
 
 function Scope:async(body)
     check_fn(body, 1, "async")
-    return wrap_job(core.spawn(self._handle, "async", body))
+    return wrap_job(core.spawn(self._handle, "async", body, nil))
 end
 
 function Job:cancel()
@@ -242,6 +261,16 @@ function async.join(job)
     wait(job)
 end
 
+function async.join_all(...)
+    local jobs = pack(...)
+    for i = 1, jobs.n do
+        check_job(jobs[i], "join_all")
+    end
+    for i = 1, jobs.n do
+        wait(jobs[i])
+    end
+end
+
 function async.await(deferred)
     check_job(deferred, "await")
     wait(deferred)
@@ -264,14 +293,15 @@ function async.await_all(...)
     return unpack(values, 1, deferreds.n)
 end
 
-function async.launch(body)
-    check_fn(body, 1, "launch")
-    return wrap_job(core.spawn(core.current(), "launch", body))
+function async.launch(context_or_body, body)
+    local context
+    context, body = launch_arguments(context_or_body, body, "launch")
+    return launch(core.current(), context, body)
 end
 
 async["async"] = function (body)
     check_fn(body, 1, "async")
-    return wrap_job(core.spawn(core.current(), "async", body))
+    return wrap_job(core.spawn(core.current(), "async", body, nil))
 end
 
 function async.scope(body)
@@ -315,15 +345,27 @@ function async.coroutine_name(name)
 end
 
 function async.context(...)
-    local name
+    local job, name
     for i = 1, select("#", ...) do
         local element = select(i, ...)
-        if getmetatable(element) ~= CoroutineName then
-            error(new_error("InvalidArgument", "context elements must be created with async.coroutine_name"), 2)
+        local mt = getmetatable(element)
+        if mt == CoroutineName then
+            name = coroutine_names[element]
+        elseif mt == Job then
+            job = element
+        elseif mt == CoroutineContext then
+            local context = coroutine_contexts[element]
+            job = context.job or job
+            name = context.name or name
+        else
+            error(new_error("InvalidArgument", "context elements must be a Job, CoroutineName, or CoroutineContext"), 2)
         end
-        name = coroutine_names[element]
     end
-    return make_context(nil, name)
+    return make_context(job, name)
+end
+
+function async.supervisor_job()
+    return wrap_job(core.supervisor_job())
 end
 
 function async.with_context(context, body)
@@ -331,7 +373,8 @@ function async.with_context(context, body)
         error(new_error("InvalidArgument", "bad argument #1 to 'with_context' (CoroutineContext expected)"), 2)
     end
     check_fn(body, 2, "with_context")
-    return run_scope("scope", body, nil, coroutine_contexts[context].name)
+    local elements = coroutine_contexts[context]
+    return run_scope("scope", body, nil, elements.name, elements.job and elements.job._handle)
 end
 
 function async.current_context()
@@ -507,7 +550,8 @@ function async.debounce(ms, fn)
             async.delay(ms)
             state.started = true
             fn(unpack(args, 1, args.n))
-        end)
+        end, nil
+        )
         pending = state
         return wrap_job(state.handle)
     end
