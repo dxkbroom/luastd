@@ -11,12 +11,17 @@ from typing import Callable
 KOTLIN_REF = re.compile(r"^\s*-- kotlin:\s*(\S+)@(\S+)\s*$")
 DESCRIBE = re.compile(r'^\s*describe\(\s*"([^"]+)"')
 TEST = re.compile(r'\b(it|pending)\(\s*"([^"]+)"')
+LUA_TEST_START = re.compile(r'^\s{4}(it|pending)\(')
 MARK = re.compile(r"^\s*--\s*(adapted|not-applicable|defer|todo):\s*(.*)$")
 COMMENT = re.compile(r"^\s*--(.*)$")
 KOTLIN_TEST = re.compile(
     r"@Test\b[^\n]*\n(?:\s*@[^\n]*\n|\s*//[^\n]*\n|\s*/\*.*?\*/\s*\n)*\s*"
     r"(?:(?:public|internal|private|open|abstract|override|suspend)\s+)*fun\s+(?:<[^>\n]+>\s*)?`?(\w+)",
     re.S,
+)
+KOTLIN_TEST_LINE = re.compile(
+    r"(?m)^\s*(?:(?:public|internal|private|open|abstract|override|suspend)\s+)*"
+    r"fun\s+(?:<[^>\n]+>\s*)?`?(\w+)"
 )
 KOTLIN_CLASS_DECLARATION = re.compile(
     r"(?m)^(?P<modifiers>(?:(?:public|internal|private|protected|abstract|open|sealed|data|inner)\s+)*)"
@@ -141,6 +146,66 @@ def parse_port(file: Path) -> tuple[list[Port], list[Issue]]:
     if pending_ref is not None:
         issues.append(Issue("describe-missing", "Kotlin reference is not followed by a describe block", file=str(file)))
     return ports, issues
+
+
+def reorder_lua_tests(source: str, kotlin_tests: list[str]) -> str:
+    """Reorder top-level Lua test blocks to Kotlin order, preserving block text."""
+    lines = source.splitlines(keepends=True)
+    starts: list[tuple[int, str]] = []
+    for index, line in enumerate(lines):
+        match = LUA_TEST_START.match(line)
+        if not match:
+            continue
+        following = line + (lines[index + 1] if index + 1 < len(lines) else "")
+        test_match = TEST.search(following)
+        if not test_match:
+            continue
+        start = index
+        while (
+            start > 0
+            and re.match(r"^\s{4}--", lines[start - 1])
+            and not MARK.match(lines[start - 1])
+        ):
+            start -= 1
+        starts.append((start, test_match.group(2)))
+    if len(starts) < 2:
+        return source
+
+    blocks: dict[str, str] = {}
+    spans: list[tuple[int, int]] = []
+    final_call_end = 0
+    for position, (start, name) in enumerate(starts):
+        call_line = next(
+            i for i in range(start, len(lines))
+            if LUA_TEST_START.match(lines[i]) and TEST.search(lines[i] + (lines[i + 1] if i + 1 < len(lines) else ""))
+        )
+        depth = 0
+        begun = False
+        end = call_line
+        for i in range(call_line, len(lines)):
+            # Strip Lua strings and comments before counting call parentheses.
+            text = re.sub(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|--.*$', "", lines[i])
+            depth += text.count("(") - text.count(")")
+            begun = begun or "(" in text
+            if begun and depth == 0:
+                end = i + 1
+                break
+        final_call_end = end
+        if position + 1 < len(starts):
+            next_start = starts[position + 1][0]
+            end = next_start
+        else:
+            end = final_call_end
+        spans.append((start, end))
+        blocks[name] = "".join(lines[start:end])
+
+    if len(blocks) != len(starts) or any(name not in blocks for name in kotlin_tests):
+        return source
+    ordered = [blocks[name] for name in kotlin_tests if name in blocks]
+    ordered.extend(blocks[name] for _, name in starts if name not in kotlin_tests)
+    first, _ = spans[0]
+    last = final_call_end
+    return "".join(lines[:first] + ["".join(ordered)] + lines[last:])
 
 
 def kotlin_source(path: str, tag: str, checkout: Path) -> str | None:
@@ -340,6 +405,7 @@ def build_report(
 
             source = source_loader(port.path, port.tag, checkout)
             source_tests: list[str] = []
+            source_test_lines: dict[str, int] = {}
             if source is None:
                 issues.append(Issue(
                     "kotlin-source-unresolved",
@@ -356,6 +422,10 @@ def build_report(
                         cls=port.cls,
                     ))
                 source_tests = kotlin_class_test_methods(source, port.cls, abstract_methods)
+                source_test_lines = {
+                    match.group(1): source.count("\n", 0, match.start()) + 1
+                    for match in KOTLIN_TEST_LINE.finditer(source)
+                }
 
             mapped: dict[str, TestPort] = {}
             for test in port.tests:
@@ -399,6 +469,8 @@ def build_report(
                     "name": name,
                     "status": test.status if test else "missing",
                     "reason": test.reason or None if test else None,
+                    "kotlin_line": source_test_lines.get(name),
+                    "lua_line": test.line if test else None,
                 })
             counts = {status: sum(item["status"] == status for item in tests) for status in STATUSES}
             classes.append({
