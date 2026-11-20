@@ -20,6 +20,7 @@ to `lua55`.
   ports cover (needs the checkout in `$KOTLINX_DIR`, default `../kotlinx.coroutines`)
 - `mise run kotlin:report [--json|--markdown] [--check]` - full Kotlin test
   inventory and port coverage report
+- `mise run kotlin:format [files...]` - reorder Lua test blocks to match Kotlin source order
 - `mise run kotlin:stubs [--dry-run]` - generate pending Lua specs for unported
   Kotlin test classes and register them in the Rust test target
 - `mise run lint [target]` / `mise run check` - rumdl, tombi, `cargo clippy`, `emmylua_check`
