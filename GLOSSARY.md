@@ -55,8 +55,19 @@ runs inside one.
 _Avoid_: Plugin sandbox, isolate
 
 **Job**:
-A handle to a launched coroutine that can be awaited for completion or cancelled.
+A coroutine lifetime handle that can be joined or cancelled and can own child
+coroutines.
 _Avoid_: Task, thread, fiber
+
+**Supervisor job**:
+A Job whose child failures do not cancel the job or its other children; it stays
+active until cancelled.
+_Avoid_: Supervisor scope
+
+**Coroutine context**:
+The set of keyed elements carried by a coroutine, including its Job and optional
+execution metadata such as its name.
+_Avoid_: Coroutine options
 
 **Deferred**:
 A Job that also produces a value, obtained with `await`.

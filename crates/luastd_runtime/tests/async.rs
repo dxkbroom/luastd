@@ -39,6 +39,53 @@ fn run_waits_for_jobs_launched_by_the_main_chunk() {
 }
 
 #[test]
+fn context_jobs_parent_both_launch_forms_and_runtime_closes_standalone_supervisors() {
+    let rt = runtime();
+    let supervisor_active_during_run: bool = rt
+        .run(async |lua| {
+            lua.load(
+                r#"
+                local async = require("luastd.async")
+                supervisor = async.supervisor_job()
+                local first = async.context(supervisor, async.coroutine_name("first"))
+                local second = async.context(async.coroutine_name("second"), first)
+                assert(second:job():is_active())
+                assert(second:coroutine_name() == "first")
+
+                local top_level = async.launch(first, function ()
+                    assert(async.current_context():coroutine_name() == "first")
+                    top_level_ran = true
+                end)
+                local scoped
+                async.scope(function (scope)
+                    scoped = scope:launch(second, function ()
+                        assert(async.current_context():coroutine_name() == "first")
+                        scoped_ran = true
+                    end)
+                end)
+                async.join_all(top_level, scoped)
+                return supervisor:is_active()
+                "#,
+            )
+            .eval_async::<bool>()
+            .await
+        })
+        .unwrap();
+
+    assert!(supervisor_active_during_run);
+    assert!(rt.lua().globals().get::<bool>("top_level_ran").unwrap());
+    assert!(rt.lua().globals().get::<bool>("scoped_ran").unwrap());
+    let (active, cancelled, completed): (bool, bool, bool) = rt
+        .lua()
+        .load("return supervisor:is_active(), supervisor:is_cancelled(), supervisor:is_completed()")
+        .eval()
+        .unwrap();
+    assert!(!active);
+    assert!(cancelled);
+    assert!(completed);
+}
+
+#[test]
 fn root_jobs_fail_independently() {
     let rt = runtime();
     rt.run(async |lua| {

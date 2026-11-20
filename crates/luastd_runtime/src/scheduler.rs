@@ -159,6 +159,7 @@ enum Entry {
 
 pub(crate) struct Scheduler {
     root: RefCell<Rc<Node>>,
+    detached_jobs: RefCell<Vec<Rc<Node>>>,
     stacks: RefCell<HashMap<usize, Vec<Entry>>>,
     runner: RefCell<Option<Function>>,
     running: Cell<bool>,
@@ -170,6 +171,7 @@ impl Scheduler {
     fn new() -> Self {
         Self {
             root: RefCell::new(Node::new(Kind::Root, None, CancellationToken::new(), None)),
+            detached_jobs: RefCell::default(),
             stacks: RefCell::default(),
             runner: RefCell::default(),
             running: Cell::new(false),
@@ -180,6 +182,10 @@ impl Scheduler {
 
     fn root(&self) -> Rc<Node> {
         self.root.borrow().clone()
+    }
+
+    fn detached_jobs(&self) -> Vec<Rc<Node>> {
+        self.detached_jobs.borrow().clone()
     }
 
     fn top(&self, key: usize) -> Entry {
@@ -259,19 +265,23 @@ pub async fn cancellable<F: Future>(lua: &Lua, future: F) -> Option<F::Output> {
     }
 }
 
-/// Cancel every job launched outside a scope (the root's children).
+/// Cancel every root child and standalone supervisor job.
 ///
 /// Hosts call this before returning from `Runtime::run` to shut background
 /// jobs down instead of waiting for them.
 pub fn cancel_jobs(lua: &Lua) {
     if let Ok(s) = scheduler(lua) {
         s.root().token.cancel();
+        for job in s.detached_jobs() {
+            job.token.cancel();
+        }
     }
 }
 
 /// Receives a failure nobody else will see: the error value of a job started
-/// with `launch` that failed in a supervisor scope (`supervisor_scope` or the
-/// implicit root of `Runtime::run`). Cancellation never reaches it.
+/// with `launch` that failed in a supervisor scope (`supervisor_scope`, a
+/// standalone supervisor job, or the implicit root of `Runtime::run`).
+/// Cancellation never reaches it.
 pub type UnhandledHandler = Rc<dyn Fn(&Lua, Value)>;
 
 /// Replace the handler for unhandled job failures, like kotlinx.coroutines'
@@ -308,7 +318,19 @@ pub(crate) fn open_root(lua: &Lua) -> Result<Rc<Node>> {
 /// Wait for the root's children, then stop accepting launches.
 pub(crate) async fn close_root(lua: &Lua, root: &Rc<Node>) -> Result<()> {
     root.wait_children().await;
-    scheduler(lua)?.running.set(false);
+    let s = scheduler(lua)?;
+    let detached = s.detached_jobs();
+    for job in &detached {
+        job.token.cancel();
+    }
+    for job in detached {
+        job.wait_children().await;
+        if !job.is_done() {
+            complete(lua, &job, Status::Cancelled, Value::Nil);
+        }
+    }
+    s.detached_jobs.borrow_mut().clear();
+    s.running.set(false);
     Ok(())
 }
 
@@ -327,7 +349,13 @@ fn is_cancellation(lua: &Lua, value: &Value) -> Result<bool> {
     })
 }
 
-fn spawn(lua: &Lua, parent: Rc<Node>, kind: Kind, body: Function) -> Result<AnyUserData> {
+fn spawn(
+    lua: &Lua,
+    parent: Rc<Node>,
+    kind: Kind,
+    body: Function,
+    coroutine_name: Option<String>,
+) -> Result<AnyUserData> {
     let s = scheduler(lua)?;
     if !s.running.get() {
         return Err(mlua::Error::runtime(
@@ -343,7 +371,7 @@ fn spawn(lua: &Lua, parent: Rc<Node>, kind: Kind, body: Function) -> Result<AnyU
         kind,
         Some(&parent),
         parent.token.child_token(),
-        parent.coroutine_name.clone(),
+        coroutine_name,
     );
     if parent.is_done() {
         // A finished scope cannot own new work (as in kotlinx.coroutines).
@@ -405,6 +433,9 @@ async fn settle(lua: &Lua, node: &Rc<Node>, ok: bool, error: Value) -> Result<(S
 
 /// Record the result, tell the parent, and wake joiners.
 fn complete(lua: &Lua, node: &Rc<Node>, status: Status, value: Value) {
+    if node.is_done() {
+        return;
+    }
     *node.result.borrow_mut() = Some((status, value.clone()));
     if let Some(parent) = node.parent.as_ref().and_then(Weak::upgrade) {
         parent
@@ -626,22 +657,44 @@ fn core(lua: &Lua) -> Result<Table> {
     core.set(
         "spawn",
         lua.create_function(
-            |lua, (parent, name, body): (AnyUserData, String, Function)| {
-                spawn(lua, node(&parent)?, kind(&name)?, body)
-            },
+            |lua,
+             (parent, name, body, coroutine_name): (
+                AnyUserData,
+                String,
+                Function,
+                Option<String>,
+            )| { spawn(lua, node(&parent)?, kind(&name)?, body, coroutine_name) },
         )?,
     )?;
     core.set(
-        "enter",
-        lua.create_function(|lua, (name, coroutine_name): (String, Option<String>)| {
+        "supervisor_job",
+        lua.create_function(|lua, ()| {
             let s = scheduler(lua)?;
-            let key = thread_key(lua);
-            let parent = s.current_node(key);
-            let token = s.current_token(key).child_token();
-            let scope = Node::new(kind(&name)?, Some(&parent), token, coroutine_name);
-            s.push(key, Entry::Node(scope.clone()));
-            handle(lua, scope)
+            let job = Node::new(Kind::Supervisor, None, CancellationToken::new(), None);
+            s.detached_jobs.borrow_mut().push(job.clone());
+            handle(lua, job)
         })?,
+    )?;
+    core.set(
+        "enter",
+        lua.create_function(
+            |lua, (name, coroutine_name, parent): (String, Option<String>, Option<AnyUserData>)| {
+                let s = scheduler(lua)?;
+                let key = thread_key(lua);
+                let parent = parent.map(|parent| node(&parent)).transpose()?;
+                let (parent, token) = match parent {
+                    Some(parent) => (parent.clone(), parent.token.child_token()),
+                    None => (s.current_node(key), s.current_token(key).child_token()),
+                };
+                let scope = Node::new(kind(&name)?, Some(&parent), token, coroutine_name);
+                if parent.is_done() {
+                    scope.token.cancel();
+                }
+                parent.children.borrow_mut().push(scope.clone());
+                s.push(key, Entry::Node(scope.clone()));
+                handle(lua, scope)
+            },
+        )?,
     )?;
     core.set(
         "coroutine_name",
@@ -709,8 +762,22 @@ fn core(lua: &Lua) -> Result<Table> {
     )?;
     core.set(
         "cancel",
-        lua.create_function(|_, ud: AnyUserData| {
-            node(&ud)?.token.cancel();
+        lua.create_function(|lua, ud: AnyUserData| {
+            let target = node(&ud)?;
+            target.token.cancel();
+            if target.kind == Kind::Supervisor && target.parent.is_none() {
+                if target.children.borrow().is_empty() {
+                    complete(lua, &target, Status::Cancelled, Value::Nil);
+                } else if scheduler(lua)?.running.get() {
+                    let lua = lua.clone();
+                    tokio::task::spawn_local(async move {
+                        target.wait_children().await;
+                        if !target.is_done() {
+                            complete(&lua, &target, Status::Cancelled, Value::Nil);
+                        }
+                    });
+                }
+            }
             Ok(())
         })?,
     )?;

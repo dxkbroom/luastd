@@ -3,9 +3,9 @@
 --- Structured concurrency, after kotlinx.coroutines.
 ---
 --- Every coroutine runs inside a scope. A scope completes only when its
---- children have, and cancelling it cancels them. Jobs launched outside any
---- scope belong to the implicit root scope of `Runtime::run`, which is a
---- supervisor and waits for them before `run` returns.
+--- children have, and cancelling it cancels them. Jobs launched without an
+--- explicit context Job belong to the implicit root scope of `Runtime::run`.
+--- Standalone supervisor jobs are cancelled when that runtime run ends.
 ---
 --- Cancellation is cooperative: it is delivered at suspension points
 --- (`delay`, `join`, `await`, `send`, `receive`, permission prompts, ...) as an
@@ -36,10 +36,13 @@ local Scope = {}
 ---@return luastd.async.CoroutineContext
 function Scope:coroutine_context() end
 
---- Launch a child job in this scope, whichever coroutine calls it.
----@param body fun(scope: luastd.async.Scope)
+--- Launch a child job in this scope, whichever coroutine calls it. A context
+--- Job replaces this scope as the parent; other elements override metadata.
+---@overload fun(context: luastd.async.CoroutineContext, body: async fun(scope: luastd.async.Scope)): luastd.async.Job
+---@param context_or_body luastd.async.CoroutineContext | async fun(scope: luastd.async.Scope)
+---@param body?           async fun(scope: luastd.async.Scope)
 ---@return luastd.async.Job
-function Scope:launch(body) end
+function Scope:launch(context_or_body, body) end
 
 --- Start a child job in this scope that produces values.
 ---@generic T...
@@ -100,13 +103,21 @@ function Job:on_cancel(handler) end
 --- them with `async.await(d)` or `async.try_await(d)`.
 ---@class luastd.async.Deferred<T...>: luastd.async.Job
 
---- Launch `body` as a child of the current scope.
+--- Launch `body` as a child of the current scope, or of the Job in `context`.
 ---
 --- In a non-supervisor scope, a failure cancels the scope and its other
 --- children. In a supervisor scope, an unhandled failure is reported on stderr.
----@param body fun(scope: luastd.async.Scope)
+---@overload fun(context: luastd.async.CoroutineContext, body: async fun(scope: luastd.async.Scope)): luastd.async.Job
+---@param context_or_body luastd.async.CoroutineContext | async fun(scope: luastd.async.Scope)
+---@param body?           async fun(scope: luastd.async.Scope)
 ---@return luastd.async.Job
-function async.launch(body) end
+function async.launch(context_or_body, body) end
+
+--- Wait for each job in argument order without raising child failures.
+--- Like `join`, cancellation of the caller is raised at the current wait.
+---@async
+---@param ... luastd.async.Job
+function async.join_all(...) end
 
 --- Start `body` as a child of the current scope; collect it with `async.await`.
 ---@generic T...
@@ -225,12 +236,12 @@ local CoroutineName = {}
 ---@return luastd.async.CoroutineName
 function async.coroutine_name(name) end
 
---- An immutable set of coroutine-context elements. Initially supports
---- `CoroutineName`; its Job is supplied by the lexical scope running it.
+--- An immutable set of coroutine-context elements, including an optional Job
+--- and CoroutineName.
 ---@class luastd.async.CoroutineContext
 local CoroutineContext = {}
 
---- Get the Job associated with this running context.
+--- Get the Job associated with this context, if it contains one.
 ---@return luastd.async.Job?
 function CoroutineContext:job() end
 
@@ -238,16 +249,21 @@ function CoroutineContext:job() end
 ---@return string?
 function CoroutineContext:coroutine_name() end
 
---- Combine context elements. When an element key is repeated, the last value
---- wins, as in Kotlin's CoroutineContext.
----@param ... luastd.async.CoroutineName
+--- Combine Job, CoroutineName, and other CoroutineContext values. When an
+--- element key is repeated, the last value wins, as in Kotlin's CoroutineContext.
+---@param ... luastd.async.Job | luastd.async.CoroutineName | luastd.async.CoroutineContext
 ---@return luastd.async.CoroutineContext
 function async.context(...) end
 
+--- Create a standalone supervisor Job. Its child failures do not cancel it or
+--- one another; the runtime cancels it when the current `Runtime::run` ends.
+---@return luastd.async.Job
+function async.supervisor_job() end
+
 --- Run `body` in a lexically scoped coroutine with the supplied elements
 --- combined with the caller's context. Unspecified elements are inherited;
---- the scope gets a child Job and cancellation relationship. The caller's
---- context is restored on return, error, or cancellation.
+--- a supplied Job becomes the scope's parent. The caller's context is restored
+--- on return, error, or cancellation.
 ---@async
 ---@generic T...
 ---@param context luastd.async.CoroutineContext
