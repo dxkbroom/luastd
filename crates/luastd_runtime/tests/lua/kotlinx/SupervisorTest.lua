@@ -89,6 +89,56 @@ describe("SupervisorTest", function ()
     )
 
     -- adapted: luastd has no `CoroutineStart.UNDISPATCHED`; yield to start the
+    it(
+        "testSupervisorThrows",
+        runtest({}, function (t)
+            local err = error_of(function ()
+                t:expect(1)
+                async.supervisor_scope(function (scope)
+                    scope:launch(function ()
+                        t:expect(2)
+                        async.delay(math.huge)
+                    end)
+                    scope:launch(function ()
+                        t:expect(3)
+                        async.delay(math.huge)
+                    end)
+                    async.yield()
+                    t:expect(4)
+                    error(luastd_test.TestException1())
+                end)
+            end)
+            assert.is_equal("TestException1", err.kind)
+            t:finish(5)
+        end)
+    )
+    -- cleanup but keeps the body's cancellation over a cleanup error (ADR 0005).
+    -- Kotlin reports that cleanup error as unhandled; luastd keeps the body error.
+    it(
+        "testSupervisorThrowsWithFailingChild",
+        runtest({}, function (t)
+            local cleanup_ran = false
+            local err = error_of(function ()
+                async.supervisor_scope(function (scope)
+                    scope:launch(function ()
+                        async.finally(function ()
+                            async.delay(1000)
+                        end,
+                            function ()
+                                cleanup_ran = true
+                                error(luastd_test.TestException2())
+                            end)
+                    end)
+                    async.yield()
+                    error(luastd_test.TestException1())
+                end)
+            end)
+            assert.is_equal("TestException1", err.kind)
+            assert.is_true(cleanup_ran)
+            t:finish(1)
+        end)
+    )
+
     -- child before cancelling its parent, then check its cancellation cleanup.
     it(
         "testSupervisorScopeExternalCancellation",
@@ -152,54 +202,4 @@ describe("SupervisorTest", function ()
     pending("testSupervisorJobCancellationException")
 
     -- adapted: when cancellation interrupts the child, `async.finally` runs
-    -- cleanup but keeps the body's cancellation over a cleanup error (ADR 0005).
-    -- Kotlin reports that cleanup error as unhandled; luastd keeps the body error.
-    it(
-        "testSupervisorThrowsWithFailingChild",
-        runtest({}, function (t)
-            local cleanup_ran = false
-            local err = error_of(function ()
-                async.supervisor_scope(function (scope)
-                    scope:launch(function ()
-                        async.finally(function ()
-                            async.delay(1000)
-                        end,
-                            function ()
-                                cleanup_ran = true
-                                error(luastd_test.TestException2())
-                            end)
-                    end)
-                    async.yield()
-                    error(luastd_test.TestException1())
-                end)
-            end)
-            assert.is_equal("TestException1", err.kind)
-            assert.is_true(cleanup_ran)
-            t:finish(1)
-        end)
-    )
-
-    it(
-        "testSupervisorThrows",
-        runtest({}, function (t)
-            local err = error_of(function ()
-                t:expect(1)
-                async.supervisor_scope(function (scope)
-                    scope:launch(function ()
-                        t:expect(2)
-                        async.delay(math.huge)
-                    end)
-                    scope:launch(function ()
-                        t:expect(3)
-                        async.delay(math.huge)
-                    end)
-                    async.yield()
-                    t:expect(4)
-                    error(luastd_test.TestException1())
-                end)
-            end)
-            assert.is_equal("TestException1", err.kind)
-            t:finish(5)
-        end)
-    )
 end)

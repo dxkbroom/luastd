@@ -381,6 +381,58 @@ function M.kotlin()
     end
 end
 
+--- Open the Neo-tree source backed by `kotlin:report --json`.
+function M.test_tree()
+    local ok, command = pcall(require, "neo-tree.command")
+    if not ok then
+        vim.notify("luastd: neo-tree unavailable\n" .. tostring(command), vim.log.levels.WARN)
+        return
+    end
+    command.execute({ source = "luastd_tests", position = "current" })
+end
+
+local test_winbar_values = {}
+
+local function test_case_name(lines, index)
+    local line = lines[index]
+    local name = line:match('^%s*it%(%s*"([^"]+)"') or line:match('^%s*pending%(%s*"([^"]+)"')
+    if not name and (line:match("^%s*it%(%s*$") or line:match("^%s*pending%(%s*$")) then
+        name = (lines[index + 1] or ""):match('^%s*"([^"]+)"')
+    end
+    return name
+end
+
+local function update_test_winbar()
+    local win = vim.api.nvim_get_current_win()
+    local buf = vim.api.nvim_win_get_buf(win)
+    local path = vim.api.nvim_buf_get_name(buf)
+    local header
+    if path:find("/tests/lua/kotlinx/", 1, true) then
+        local row = vim.api.nvim_win_get_cursor(win)[1]
+        local lines = vim.api.nvim_buf_get_lines(buf, 0, row, false)
+        local class, test
+        for index, line in ipairs(lines) do
+            class = line:match('^%s*describe%(%s*"([^"]+)"') or class
+            test = test_case_name(lines, index) or test
+        end
+        if class and test then
+            header = class .. "  ›  " .. test
+        end
+    end
+
+    local previous = test_winbar_values[win]
+    if header then
+        local value = " " .. header
+        if value ~= previous then
+            vim.wo[win].winbar = value
+            test_winbar_values[win] = value
+        end
+    elseif previous then
+        vim.wo[win].winbar = ""
+        test_winbar_values[win] = nil
+    end
+end
+
 local function explorer()
     local ok, command = pcall(require, "neo-tree.command")
     if not ok then
@@ -404,6 +456,7 @@ function M.keymaps()
     map("<leader>pgd", function () M.jump("def") end, "[D]efinition")
     map("<leader>pgs", function () M.jump("spec") end, "[S]pec")
     map("<leader>pgk", M.kotlin, "[K]otlin test (from a kotlinx/ port)")
+    map("<leader>pt", M.test_tree, "[T]est cases (workspace tree)")
     map("<leader>pv", function () M.with_module(M.layout, "luastd: open module") end, "[V]iew module (impl, def, spec)")
     map("<leader>pm", function () M.pick(M.layout, "luastd: open module") end, "pick [M]odule")
     local ok, wk = pcall(require, "which-key")
@@ -413,6 +466,12 @@ function M.keymaps()
             { "<leader>pg", group = "[G]o to" }
         })
     end
+    local group = vim.api.nvim_create_augroup("luastd_test_sticky_header", { clear = true })
+    vim.api.nvim_create_autocmd({ "BufEnter", "CursorMoved", "WinEnter", "TextChanged", "InsertLeave" }, {
+        group = group,
+        callback = update_test_winbar
+    })
+    update_test_winbar()
 end
 
 return M
