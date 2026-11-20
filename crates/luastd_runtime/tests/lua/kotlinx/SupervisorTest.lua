@@ -1,6 +1,6 @@
 -- Port of kotlinx.coroutines' SupervisorTest (see AGENTS.md, "Kotlin test
--- ports"). luastd's supervisor boundary is `async.supervisor_scope`; it has
--- no standalone SupervisorJob, Job parent, or start modes.
+-- ports"). luastd supports standalone SupervisorJobs and context-based
+-- launches, but not `Job(parent)` or coroutine start modes.
 local async = require("luastd.async")
 local luastd_test = require("luastd_test")
 local runtest = luastd_test.runtest
@@ -17,9 +17,29 @@ end
 
 -- kotlin: kotlinx-coroutines-core/common/test/SupervisorTest.kt@1.11.0
 describe("SupervisorTest", function ()
-    -- defer: no standalone `SupervisorJob()` or `joinAll`; launch failures are
-    -- reported to the host's unhandled-failure handler instead.
-    pending("testSupervisorJob")
+    it(
+        "testSupervisorJob",
+        runtest({ unhandled = { "TestException2", "TestException1" } }, function (t)
+            t:expect(1)
+            local supervisor = async.supervisor_job()
+            local job1 = async.launch(async.context(supervisor, async.coroutine_name("job1")), function ()
+                t:expect(2)
+                async.yield()
+                t:expect(4)
+                error(luastd_test.TestException1())
+            end)
+            local job2 = async.launch(async.context(supervisor, async.coroutine_name("job2")), function ()
+                t:expect(3)
+                error(luastd_test.TestException2())
+            end)
+            async.join_all(job1, job2)
+            t:finish(5)
+            assert.is_true(job1:is_cancelled())
+            assert.is_true(job2:is_cancelled())
+            assert.is_false(supervisor:is_cancelled())
+            assert.is_false(supervisor:is_completed())
+        end)
+    )
 
     it(
         "testSupervisorScope",
