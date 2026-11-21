@@ -26,6 +26,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::errors::cancelled;
 
+const UNATTACHED_CHILD: usize = usize::MAX;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
     Root,
@@ -76,6 +78,8 @@ impl Status {
 pub(crate) struct Node {
     kind: Kind,
     parent: Option<Weak<Node>>,
+    /// Slot in the parent's child vector, or `UNATTACHED_CHILD` for roots.
+    parent_index: Cell<usize>,
     /// Coroutine name inherited from the parent context, if any.
     coroutine_name: Option<String>,
     token: CancellationToken,
@@ -102,6 +106,7 @@ impl Node {
         Rc::new(Self {
             kind,
             parent: parent.map(Rc::downgrade),
+            parent_index: Cell::new(UNATTACHED_CHILD),
             coroutine_name,
             token,
             children: RefCell::default(),
@@ -120,6 +125,36 @@ impl Node {
 
     fn is_done(&self) -> bool {
         self.result.borrow().is_some()
+    }
+
+    fn add_child(parent: &Rc<Self>, child: Rc<Self>) {
+        let mut children = parent.children.borrow_mut();
+        let index = children.len();
+        debug_assert_eq!(child.parent_index.get(), UNATTACHED_CHILD);
+        child.parent_index.set(index);
+        children.push(child);
+    }
+
+    fn remove_child(parent: &Self, child: &Self) {
+        let index = child.parent_index.get();
+        assert_ne!(
+            index, UNATTACHED_CHILD,
+            "completed node was not attached to its parent"
+        );
+        let mut children = parent.children.borrow_mut();
+        assert!(
+            index < children.len(),
+            "scheduler child index is out of bounds"
+        );
+        let removed = children.swap_remove(index);
+        assert!(
+            std::ptr::eq(removed.as_ref(), child),
+            "scheduler child index points to another node"
+        );
+        child.parent_index.set(UNATTACHED_CHILD);
+        if let Some(moved) = children.get(index) {
+            moved.parent_index.set(index);
+        }
     }
 
     /// Wait for completion; not cancellable (callers wrap it when needed).
@@ -377,7 +412,7 @@ fn spawn(
         // A finished scope cannot own new work (as in kotlinx.coroutines).
         child.token.cancel();
     }
-    parent.children.borrow_mut().push(child.clone());
+    Node::add_child(&parent, child.clone());
 
     let thread = lua.create_thread(runner)?;
     let key = thread.to_pointer() as usize;
@@ -438,10 +473,7 @@ fn complete(lua: &Lua, node: &Rc<Node>, status: Status, value: Value) {
     }
     *node.result.borrow_mut() = Some((status, value.clone()));
     if let Some(parent) = node.parent.as_ref().and_then(Weak::upgrade) {
-        parent
-            .children
-            .borrow_mut()
-            .retain(|c| !Rc::ptr_eq(c, node));
+        Node::remove_child(&parent, node);
         if node.kind.is_job() && status == Status::Failed {
             if !parent.supervisor() {
                 parent.child_failure.borrow_mut().get_or_insert(value);
@@ -690,7 +722,7 @@ fn core(lua: &Lua) -> Result<Table> {
                 if parent.is_done() {
                     scope.token.cancel();
                 }
-                parent.children.borrow_mut().push(scope.clone());
+                Node::add_child(&parent, scope.clone());
                 s.push(key, Entry::Node(scope.clone()));
                 handle(lua, scope)
             },

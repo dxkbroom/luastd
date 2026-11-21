@@ -39,6 +39,31 @@ fn run_waits_for_jobs_launched_by_the_main_chunk() {
 }
 
 #[test]
+fn scope_removes_children_that_complete_out_of_order() {
+    let rt = runtime();
+    let order: String = rt
+        .run(async |lua| {
+            lua.load(
+                r#"
+                local async = require("luastd.async")
+                local completed = {}
+                async.scope(function (scope)
+                    scope:launch(function () async.delay(25); completed[#completed + 1] = "first" end)
+                    scope:launch(function () async.delay(2); completed[#completed + 1] = "second" end)
+                    scope:launch(function () async.delay(10); completed[#completed + 1] = "third" end)
+                end)
+                return table.concat(completed, ",")
+                "#,
+            )
+            .eval_async::<String>()
+            .await
+        })
+        .unwrap();
+
+    assert_eq!(order, "second,third,first");
+}
+
+#[test]
 fn context_jobs_parent_both_launch_forms_and_runtime_closes_standalone_supervisors() {
     let rt = runtime();
     let supervisor_active_during_run: bool = rt
