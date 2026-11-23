@@ -21,7 +21,6 @@ decisions.
 - PUC-Rio Lua 5.1 (ADR 0001). Targets: `luajit52` (primary), `luajit`, `lua52`-`lua55`.
 - mlua `send` and multi-threaded Lua states (ADR 0002).
 - An editor or plugin framework. `tinyvi` is an example, not a product.
-- Cold `Flow` in v1 ([#1](https://github.com/dxkbroom/luastd/issues/1)).
 
 ## Crates
 
@@ -132,5 +131,6 @@ Review checkpoints: after layer 2, after layer 4, after layer 6.
 ## Deferred
 
 - Cold `Flow` and operator chains such as `flow:debounce(ms):map(f)`:
+  a large, on-demand track; design with an ADR before starting.
   [#1](https://github.com/dxkbroom/luastd/issues/1).
 - A lower-level "drive it from your own loop" API next to `Runtime::run`.
