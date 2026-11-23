@@ -26,6 +26,19 @@ pub const TYPE_NAME: &str = "luastd.path.Path";
 #[derive(Clone, Debug)]
 pub struct PathLua(Utf8PathBuf);
 
+impl PathLua {
+    /// Construct from a UTF-8 path string. Used by effect modules that
+    /// hand paths back to Lua (e.g. `luastd.fs`).
+    pub fn new(path: impl AsRef<str>) -> Self {
+        Self(Utf8PathBuf::from(path.as_ref()))
+    }
+
+    /// The underlying path as a string.
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
 impl fmt::Display for PathLua {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(self.0.as_str())
