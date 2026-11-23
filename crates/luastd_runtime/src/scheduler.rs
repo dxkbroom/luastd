@@ -92,6 +92,10 @@ pub(crate) struct Node {
     on_cancel: RefCell<Vec<Function>>,
     result: RefCell<Option<(Status, Value)>>,
     done: Notify,
+    /// Lazy jobs are not scheduled until `start_job` is called.
+    lazy: Cell<bool>,
+    started: Cell<bool>,
+    start_notify: Notify,
 }
 
 impl Node {
@@ -116,6 +120,9 @@ impl Node {
             on_cancel: RefCell::default(),
             result: RefCell::default(),
             done: Notify::new(),
+            lazy: Cell::new(false),
+            started: Cell::new(true),
+            start_notify: Notify::new(),
         })
     }
 
@@ -390,6 +397,7 @@ fn spawn(
     kind: Kind,
     body: Function,
     coroutine_name: Option<String>,
+    lazy: bool,
 ) -> Result<AnyUserData> {
     let s = scheduler(lua)?;
     if !s.running.get() {
@@ -408,6 +416,10 @@ fn spawn(
         parent.token.child_token(),
         coroutine_name,
     );
+    if lazy {
+        child.lazy.set(true);
+        child.started.set(false);
+    }
     if parent.is_done() {
         // A finished scope cannot own new work (as in kotlinx.coroutines).
         child.token.cancel();
@@ -422,7 +434,23 @@ fn spawn(
     let ud = handle(lua, child.clone())?;
     let future = thread.into_async::<()>((ud.clone(), body))?;
     let lua = lua.clone();
+    let node_for_wait = child.clone();
     tokio::task::spawn_local(async move {
+        // Lazy jobs wait for `start_job` (or cancellation) before running.
+        if node_for_wait.lazy.get() && !node_for_wait.started.get() {
+            tokio::select! {
+                biased;
+                () = node_for_wait.token.cancelled() => {}
+                () = node_for_wait.start_notify.notified() => {}
+            }
+            if node_for_wait.token.is_cancelled() && !node_for_wait.started.get() {
+                if !node_for_wait.is_done() {
+                    complete(&lua, &node_for_wait, Status::Cancelled, Value::Nil);
+                }
+                s.stacks.borrow_mut().remove(&key);
+                return;
+            }
+        }
         let outcome = future.await;
         if !child.is_done() {
             // The runner settles every job itself; this only guards against
@@ -447,6 +475,13 @@ async fn settle(lua: &Lua, node: &Rc<Node>, ok: bool, error: Value) -> Result<(S
     let body_cancelled = !ok && is_cancellation(lua, &error)?;
     if !ok && !body_cancelled {
         node.token.cancel();
+    }
+    // Unstarted lazy children never run; cancel them so the scope can finish.
+    for child in node.children.borrow().clone() {
+        if child.lazy.get() && !child.started.get() && !child.is_done() {
+            child.token.cancel();
+            complete(lua, &child, Status::Cancelled, Value::Nil);
+        }
     }
     node.wait_children().await;
     if let Some(timer) = node.timer.borrow_mut().take() {
@@ -484,6 +519,27 @@ fn complete(lua: &Lua, node: &Rc<Node>, status: Status, value: Value) {
         }
     }
     node.done.notify_waiters();
+}
+
+fn start_job(lua: &Lua, node: Rc<Node>) -> Result<bool> {
+    if node.is_done() {
+        return Ok(false);
+    }
+    if node.token.is_cancelled() {
+        if node.lazy.get() && !node.started.get() && !node.is_done() {
+            complete(lua, &node, Status::Cancelled, Value::Nil);
+        }
+        return Ok(false);
+    }
+    if node.started.get() {
+        return Ok(false);
+    }
+    if !node.lazy.get() {
+        return Ok(false);
+    }
+    node.started.set(true);
+    node.start_notify.notify_waiters();
+    Ok(true)
 }
 
 fn report_unhandled(lua: &Lua, value: &Value) {
@@ -534,6 +590,50 @@ struct ChannelState {
 pub(crate) struct Channel(Rc<ChannelState>);
 
 impl UserData for Channel {}
+
+/// Semaphore state: a counting permit pool backed by tokio's fair semaphore.
+#[derive(Clone)]
+pub(crate) struct Semaphore(Rc<SemaphoreState>);
+
+pub(crate) struct SemaphoreState {
+    max: usize,
+    inner: std::sync::Arc<tokio::sync::Semaphore>,
+}
+
+impl Semaphore {
+    pub(crate) fn new(permits: usize, acquired: usize) -> Result<Self> {
+        if permits == 0 {
+            return Err(crate::errors::LuaError::new(
+                "InvalidArgument",
+                "semaphore needs at least 1 permit",
+            )
+            .into());
+        }
+        if acquired > permits {
+            return Err(crate::errors::LuaError::new(
+                "InvalidArgument",
+                "acquiredPermits out of range",
+            )
+            .into());
+        }
+        let inner = std::sync::Arc::new(tokio::sync::Semaphore::new(permits));
+        for _ in 0..acquired {
+            let permit = inner.try_acquire().map_err(|_| {
+                mlua::Error::from(crate::errors::LuaError::new(
+                    "InvalidArgument",
+                    "acquiredPermits out of range",
+                ))
+            })?;
+            std::mem::forget(permit);
+        }
+        Ok(Self(Rc::new(SemaphoreState {
+            max: permits,
+            inner,
+        })))
+    }
+}
+
+impl UserData for Semaphore {}
 
 impl Channel {
     fn new(cap: usize) -> Self {
@@ -690,13 +790,48 @@ fn core(lua: &Lua) -> Result<Table> {
         "spawn",
         lua.create_function(
             |lua,
+             (parent, name, body, coroutine_name, lazy): (
+                AnyUserData,
+                String,
+                Function,
+                Option<String>,
+                Option<bool>,
+            )| {
+                spawn(
+                    lua,
+                    node(&parent)?,
+                    kind(&name)?,
+                    body,
+                    coroutine_name,
+                    lazy.unwrap_or(false),
+                )
+            },
+        )?,
+    )?;
+    core.set(
+        "spawn_lazy",
+        lua.create_function(
+            |lua,
              (parent, name, body, coroutine_name): (
                 AnyUserData,
                 String,
                 Function,
                 Option<String>,
-            )| { spawn(lua, node(&parent)?, kind(&name)?, body, coroutine_name) },
+            )| {
+                spawn(
+                    lua,
+                    node(&parent)?,
+                    kind(&name)?,
+                    body,
+                    coroutine_name,
+                    true,
+                )
+            },
         )?,
+    )?;
+    core.set(
+        "start_job",
+        lua.create_function(|lua, ud: AnyUserData| start_job(lua, node(&ud)?))?,
     )?;
     core.set(
         "supervisor_job",
@@ -797,6 +932,9 @@ fn core(lua: &Lua) -> Result<Table> {
         lua.create_function(|lua, ud: AnyUserData| {
             let target = node(&ud)?;
             target.token.cancel();
+            if target.lazy.get() && !target.started.get() && !target.is_done() {
+                complete(lua, &target, Status::Cancelled, Value::Nil);
+            }
             if target.kind == Kind::Supervisor && target.parent.is_none() {
                 if target.children.borrow().is_empty() {
                     complete(lua, &target, Status::Cancelled, Value::Nil);
@@ -828,9 +966,12 @@ fn core(lua: &Lua) -> Result<Table> {
         "state",
         lua.create_function(|_, ud: AnyUserData| {
             let node = node(&ud)?;
+            let status_cancelled =
+                matches!(node.result.borrow().as_ref(), Some((Status::Cancelled, _)));
+            let cancelled = node.token.is_cancelled() || status_cancelled;
             Ok((
-                !node.is_done() && !node.token.is_cancelled(),
-                node.token.is_cancelled(),
+                !node.is_done() && !cancelled && node.started.get(),
+                cancelled,
                 node.is_done(),
             ))
         })?,
@@ -923,6 +1064,60 @@ fn core(lua: &Lua) -> Result<Table> {
     core.set(
         "is_closed",
         lua.create_function(|_, ch: UserDataRef<Channel>| Ok(ch.0.closed.get()))?,
+    )?;
+    core.set(
+        "semaphore",
+        lua.create_function(|_, (permits, acquired): (usize, Option<usize>)| {
+            Semaphore::new(permits, acquired.unwrap_or(0))
+        })?,
+    )?;
+    core.set(
+        "acquire",
+        lua.create_async_function(|lua, sem: UserDataRef<Semaphore>| {
+            let sem = sem.clone();
+            async move {
+                let permit = sem.0.inner.clone().acquire_owned();
+                match cancellable(&lua, permit).await {
+                    Some(Ok(permit)) => {
+                        std::mem::forget(permit);
+                        Ok(())
+                    }
+                    Some(Err(_)) => Err(mlua::Error::runtime("semaphore closed")),
+                    None => Err(crate::errors::LuaError::cancelled().into()),
+                }
+            }
+        })?,
+    )?;
+    core.set(
+        "release",
+        lua.create_function(|_, sem: UserDataRef<Semaphore>| {
+            let state = &sem.0;
+            if state.inner.available_permits() >= state.max {
+                return Err(crate::errors::LuaError::new(
+                    "IllegalState",
+                    "The number of released permits cannot be greater than the number of permits",
+                )
+                .into());
+            }
+            state.inner.add_permits(1);
+            Ok(())
+        })?,
+    )?;
+    core.set(
+        "try_acquire",
+        lua.create_function(
+            |_, sem: UserDataRef<Semaphore>| match sem.0.inner.try_acquire() {
+                Ok(permit) => {
+                    std::mem::forget(permit);
+                    Ok(true)
+                }
+                Err(_) => Ok(false),
+            },
+        )?,
+    )?;
+    core.set(
+        "available_permits",
+        lua.create_function(|_, sem: UserDataRef<Semaphore>| Ok(sem.0.inner.available_permits()))?,
     )?;
     Ok(core)
 }

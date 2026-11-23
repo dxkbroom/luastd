@@ -81,6 +81,7 @@ end
 
 local coroutine_contexts = setmetatable({}, { __mode = "k" })
 local coroutine_names = setmetatable({}, { __mode = "k" })
+local completable_channels = setmetatable({}, { __mode = "k" })
 
 local CoroutineContext = {}
 CoroutineContext.__index = CoroutineContext
@@ -174,16 +175,22 @@ local function launch_arguments(context_or_body, body, name)
     return coroutine_contexts[context_or_body], body
 end
 
-local function launch(parent, context, body)
+local function launch(parent, context, body, lazy)
     local elements = context or {}
     local job = elements.job
-    return wrap_job(core.spawn(job and job._handle or parent, "launch", body, elements.name))
+    return wrap_job(core.spawn(job and job._handle or parent, "launch", body, elements.name, lazy and true or false))
 end
 
 function Scope:launch(context_or_body, body)
     local context
     context, body = launch_arguments(context_or_body, body, "launch")
-    return launch(self._handle, context, body)
+    return launch(self._handle, context, body, false)
+end
+
+function Scope:launch_lazy(context_or_body, body)
+    local context
+    context, body = launch_arguments(context_or_body, body, "launch_lazy")
+    return launch(self._handle, context, body, true)
 end
 
 function Scope:async(body)
@@ -192,6 +199,11 @@ function Scope:async(body)
 end
 
 function Job:cancel()
+    local ch = completable_channels[self._handle]
+    if ch then
+        local status = core.send(ch._channel, { cancelled = true })
+        if status == "ok" then return true end
+    end
     core.cancel(self._handle)
 end
 
@@ -210,6 +222,24 @@ function Job:is_completed()
     return done
 end
 
+function Job:start()
+    return core.start_job(self._handle)
+end
+
+function Job:complete(value)
+    local ch = completable_channels[self._handle]
+    if not ch then return false end
+    local status = core.send(ch._channel, { ok = true, value = value })
+    return status == "ok"
+end
+
+function Job:complete_exceptionally(err)
+    local ch = completable_channels[self._handle]
+    if not ch then return false end
+    local status = core.send(ch._channel, { ok = false, err = err })
+    return status == "ok"
+end
+
 function Job:on_cancel(handler)
     check_fn(handler, 1, "on_cancel")
     core.on_cancel(self._handle, handler)
@@ -222,6 +252,9 @@ Scope.is_active = Job.is_active
 Scope.is_cancelled = Job.is_cancelled
 Scope.is_completed = Job.is_completed
 Scope.on_cancel = Job.on_cancel
+Scope.start = Job.start
+Scope.complete = Job.complete
+Scope.complete_exceptionally = Job.complete_exceptionally
 
 -- Waiting is prefix-only (`async.join`, `async.await`, `async.try_await`;
 -- ADR 0007). Scope is accepted for compatibility, though context:job() is the
@@ -240,6 +273,8 @@ end
 -- Wait for `job`; a cancelled caller raises the cancellation, even when the
 -- job has already finished (every wait is a cancellation point).
 local function wait(job)
+    -- Lazy jobs start on first wait, matching Kotlin's await/join semantics.
+    if not job:is_completed() then job:start() end
     if not core.join(job._handle) then raise_cancelled() end
 end
 
@@ -296,12 +331,40 @@ end
 function async.launch(context_or_body, body)
     local context
     context, body = launch_arguments(context_or_body, body, "launch")
-    return launch(core.current(), context, body)
+    return launch(core.current(), context, body, false)
+end
+
+function async.launch_lazy(context_or_body, body)
+    local context
+    context, body = launch_arguments(context_or_body, body, "launch_lazy")
+    return launch(core.current(), context, body, true)
 end
 
 async["async"] = function (body)
     check_fn(body, 1, "async")
     return wrap_job(core.spawn(core.current(), "async", body, nil))
+end
+
+function async.async_lazy(body)
+    check_fn(body, 1, "async_lazy")
+    return wrap_job(core.spawn(core.current(), "async", body, nil, true))
+end
+
+function async.completable_deferred()
+    local channel = async.channel(1)
+    local job = async.async(function (scope)
+        return async.finally(function ()
+            local record = channel:receive()
+            if record.cancelled then raise_cancelled() end
+            if not record.ok then error(record.err, 0) end
+            return record.value
+        end,
+            function ()
+                channel:close()
+            end)
+    end)
+    completable_channels[job._handle] = channel
+    return job
 end
 
 function async.scope(body)
@@ -568,6 +631,134 @@ function async.throttle(ms, fn)
             return fn(...)
         end
     end
+end
+
+-- Synchronization primitives.
+
+local Semaphore = {}
+Semaphore.__index = Semaphore
+
+---@class luastd.async.Mutex
+---@field _sem   luastd.async.Semaphore
+---@field _owner   any?
+---@field _pending any[]
+local Mutex = {}
+Mutex.__index = Mutex
+
+function async.semaphore(n, acquired)
+    if type(n) ~= "number" or n < 0 or n % 1 ~= 0 then
+        error(new_error("InvalidArgument", "bad argument #1 to 'semaphore' (non-negative integer expected)"), 2)
+    end
+    if acquired == nil then acquired = 0 end
+    if type(acquired) ~= "number" or acquired < 0 or acquired % 1 ~= 0 or acquired > n then
+        error(new_error("InvalidArgument", "bad argument #2 to 'semaphore' (integer in 0..permits expected)"), 2)
+    end
+    return setmetatable({ _core = core.semaphore(n, acquired) }, Semaphore)
+end
+
+function async.mutex(locked)
+    if locked ~= nil and type(locked) ~= "boolean" then
+        error(new_error("InvalidArgument", "bad argument #1 to 'mutex' (boolean expected)"), 2)
+    end
+    local sem = async.semaphore(1, locked and 1 or 0)
+    return setmetatable({ _sem = sem, _owner = nil, _pending = {} }, Mutex)
+end
+
+function Semaphore:acquire()
+    core.acquire(self._core)
+end
+
+function Semaphore:release()
+    core.release(self._core)
+end
+
+function Semaphore:try_acquire()
+    return core.try_acquire(self._core)
+end
+
+function Semaphore:available_permits()
+    return core.available_permits(self._core)
+end
+
+function Semaphore:is_locked()
+    return self:available_permits() == 0
+end
+
+function Semaphore:with_permit(body)
+    check_fn(body, 1, "with_permit")
+    self:acquire()
+    async.finally(body, function () self:release() end)
+end
+
+-- Mutex.
+
+function Mutex:is_locked()
+    return self._sem:available_permits() == 0
+end
+
+function Mutex:try_lock(owner)
+    if owner ~= nil and self:holds_lock(owner) then
+        error(new_error("IllegalState", "This mutex is already locked by the specified owner: " .. tostring(owner)), 2)
+    end
+    local ok = self._sem:try_acquire()
+    if ok then self._owner = owner end
+    return ok
+end
+
+function Mutex:lock(owner)
+    if owner ~= nil and self:holds_lock(owner) then
+        error(new_error("IllegalState", "This mutex is already locked by the specified owner: " .. tostring(owner)), 2)
+    end
+    if self._sem:try_acquire() then
+        self._owner = owner
+        return
+    end
+    table.insert(self._pending, owner)
+    local ok, err = pcall(function () self._sem:acquire() end)
+    for i, v in ipairs(self._pending) do
+        if rawequal(v, owner) then
+            table.remove(self._pending, i)
+            break
+        end
+    end
+    if not ok then error(err, 0) end
+    self._owner = owner
+end
+
+function Mutex:unlock(owner)
+    if not self:is_locked() then
+        error(new_error("IllegalState", "This mutex is not locked"), 2)
+    end
+    if owner ~= nil and not rawequal(self._owner, owner) then
+        error(new_error("IllegalState", "This mutex is locked by another owner"), 2)
+    end
+    -- Transfer ownership to the next waiter synchronously, if any.
+    if #self._pending > 0 then
+        self._owner = self._pending[1]
+        table.remove(self._pending, 1)
+    else
+        self._owner = nil
+    end
+    self._sem:release()
+end
+
+function Mutex:holds_lock(owner)
+    if not self:is_locked() then return false end
+    return rawequal(self._owner, owner)
+end
+
+function Mutex:acquire(owner)
+    self:lock(owner)
+end
+
+function Mutex:release(owner)
+    self:unlock(owner)
+end
+
+function Mutex:with_lock(body)
+    check_fn(body, 1, "with_lock")
+    self:lock(nil)
+    async.finally(body, function () self:unlock(nil) end)
 end
 
 return async, pcall, xpcall

@@ -497,6 +497,39 @@ describe("luastd.async", function ()
         end)
     end)
 
+    describe("completable deferred", function ()
+        it("complete returns value", function ()
+            local d = async.completable_deferred()
+            assert.is_true(d:complete(42))
+            assert.is_equal(42, async.await(d))
+        end)
+
+        it("complete_exceptionally raises", function ()
+            local d = async.completable_deferred()
+            assert.is_true(d:complete_exceptionally({ kind = "Bad", message = "bad" }))
+            local ok, err = async.try_await(d)
+            assert.is_false(ok)
+            assert.is_equal("Bad", err.kind)
+        end)
+
+        it("cancel completes cancelled", function ()
+            local d = async.completable_deferred()
+            assert.is_true(d:cancel())
+            async.join(d)
+            assert.is_true(d:is_cancelled())
+            assert.is_true(d:is_completed())
+            local ok, err = async.try_await(d)
+            assert.is_false(ok)
+            assert.is_equal("JobCancelled", err.kind)
+        end)
+
+        it("complete returns false second time", function ()
+            local d = async.completable_deferred()
+            assert.is_true(d:complete(1))
+            assert.is_false(d:complete(2))
+        end)
+    end)
+
     describe("channel", function ()
         it("delivers buffered values in order and ends iteration on close", function ()
             local ch = async.channel(4)
@@ -808,6 +841,315 @@ describe("luastd.async", function ()
                 ---@diagnostic disable-next-line: param-type-mismatch
                 error_of(function () async.with_timeout("1", function () end) end).kind
             )
+        end)
+    end)
+
+    describe("mutex and semaphore", function ()
+        it("mutex serializes", function ()
+            async.scope(function ()
+                local m = async.mutex()
+                local order = {}
+                local function worker(label)
+                    m:with_lock(function ()
+                        table.insert(order, label .. "a")
+                        async.yield()
+                        table.insert(order, label .. "b")
+                    end)
+                end
+                async.launch(function () worker("X") end)
+                async.launch(function () worker("Y") end)
+                async.delay(50)
+                -- each critical section runs to completion before the next
+                assert.is_true(#order == 4)
+            end)
+        end)
+
+        it("semaphore limits concurrency", function ()
+            async.scope(function ()
+                local sem = async.semaphore(2)
+                local running = 0
+                local maxrunning = 0
+                local function worker()
+                    sem:with_permit(function ()
+                        running = running + 1
+                        if running > maxrunning then maxrunning = running end
+                        async.delay(10)
+                        running = running - 1
+                    end)
+                end
+                for i = 1, 5 do
+                    async.launch(worker)
+                end
+                async.delay(100)
+                assert.is_true(maxrunning <= 2)
+            end)
+        end)
+
+        it("try_acquire", function ()
+            async.scope(function ()
+                local sem = async.semaphore(1)
+                assert.is_true(sem:try_acquire())
+                assert.is_false(sem:try_acquire())
+                sem:release()
+                assert.is_true(sem:try_acquire())
+            end)
+        end)
+    end)
+
+    describe("mutex and semaphore", function ()
+        it("mutex serializes", function ()
+            local counter = 0
+            async.scope(function ()
+                local m = async.mutex()
+                local jobs = {}
+                for i = 1, 5 do
+                    table.insert(
+                        jobs,
+                        async.launch(function ()
+                            m:with_lock(function ()
+                                local v = counter
+                                async.delay(1)
+                                counter = v + 1
+                            end)
+                        end)
+                    )
+                end
+                for _, j in ipairs(jobs) do
+                    async.join(j)
+                end
+            end)
+            assert.is_equal(5, counter)
+        end)
+
+        it("semaphore limits concurrency", function ()
+            local max_seen, current = 0, 0
+            async.scope(function ()
+                local sem = async.semaphore(2)
+                local jobs = {}
+                for i = 1, 6 do
+                    table.insert(
+                        jobs,
+                        async.launch(function ()
+                            sem:with_permit(function ()
+                                current = current + 1
+                                if current > max_seen then max_seen = current end
+                                async.delay(5)
+                                current = current - 1
+                            end)
+                        end)
+                    )
+                end
+                for _, j in ipairs(jobs) do
+                    async.join(j)
+                end
+            end)
+            assert.is_true(max_seen <= 2)
+        end)
+
+        it("try_acquire and available_permits", function ()
+            local sem = async.semaphore(2)
+            assert.is_true(sem:try_acquire())
+            assert.is_equal(1, sem:available_permits())
+            assert.is_true(sem:try_acquire())
+            assert.is_equal(0, sem:available_permits())
+            assert.is_false(sem:try_acquire())
+            sem:release()
+            assert.is_equal(1, sem:available_permits())
+        end)
+
+        it("mutex is not a semaphore", function ()
+            assert.is_nil(getmetatable(async.mutex())._core)
+        end)
+
+        it("semaphore fairness", function ()
+            local log = {}
+            async.scope(function ()
+                local sem = async.semaphore(1)
+                sem:acquire()
+                async.launch(function ()
+                    async.delay(0)
+                    table.insert(log, "first-acquire-wait")
+                    sem:acquire()
+                    table.insert(log, "first-got")
+                end)
+                async.launch(function ()
+                    async.delay(0)
+                    table.insert(log, "second-acquire-wait")
+                    sem:acquire()
+                    table.insert(log, "second-got")
+                end)
+                async.delay(5)
+                table.insert(log, "release1")
+                sem:release()
+                async.delay(5)
+                table.insert(log, "release2")
+                sem:release()
+                async.delay(5)
+            end)
+            -- first waiter should get permit before second
+            local i1, i2 = 0, 0
+            for i, v in ipairs(log) do
+                if v == "first-got" then i1 = i end
+                if v == "second-got" then i2 = i end
+            end
+            assert.is_true(i1 > 0 and i2 > 0 and i1 < i2)
+        end)
+
+        it("semaphore cancellation returns permit back", function ()
+            local sem = async.semaphore(1)
+            sem:acquire()
+            assert.is_equal(0, sem:available_permits())
+            local job
+            async.scope(function ()
+                job = async.launch(function ()
+                    assert.is_false(sem:try_acquire())
+                    sem:acquire()
+                end)
+                async.delay(5)
+                job:cancel()
+            end)
+            assert.is_equal(0, sem:available_permits())
+            sem:release()
+            assert.is_equal(1, sem:available_permits())
+        end)
+
+        it("semaphore cancellation does not resume waiters", function ()
+            local log = {}
+            async.scope(function ()
+                local sem = async.semaphore(1)
+                sem:acquire()
+                local job1 = async.launch(function ()
+                    table.insert(log, "job1-wait")
+                    sem:acquire()
+                    table.insert(log, "job1-got")
+                end)
+                local job2 = async.launch(function ()
+                    table.insert(log, "job2-wait")
+                    sem:acquire()
+                    table.insert(log, "job2-got")
+                end)
+                async.delay(5)
+                table.insert(log, "cancel-job2")
+                job2:cancel()
+                async.delay(5)
+                table.insert(log, "cancel-job1")
+                job1:cancel()
+                async.delay(5)
+            end)
+            -- neither should have got
+            local got = false
+            for _, v in ipairs(log) do
+                if v:match("got") then got = true end
+            end
+            assert.is_false(got)
+        end)
+
+        it("mutex tryLock and isLocked", function ()
+            local m = async.mutex()
+            assert.is_false(m:is_locked())
+            assert.is_true(m:try_lock())
+            assert.is_true(m:is_locked())
+            assert.is_false(m:try_lock())
+            m:unlock()
+            assert.is_false(m:is_locked())
+        end)
+
+        it("mutex withLock failure unlocks", function ()
+            local m = async.mutex()
+            local ok, err = pcall(function ()
+                m:with_lock(function ()
+                    assert.is_true(m:is_locked())
+                    error({ kind = "TestException" })
+                end)
+            end)
+            assert.is_false(ok)
+            assert.is_false(m:is_locked())
+        end)
+
+        it("mutex holdsLock", function ()
+            local m = async.mutex()
+            local o1 = {}
+            local o2 = {}
+            m:lock(o1)
+            assert.is_true(m:holds_lock(o1))
+            assert.is_false(m:holds_lock(o2))
+            m:unlock(o1)
+            assert.is_false(m:holds_lock(o1))
+        end)
+
+        it("mutex unlock wrong owner throws", function ()
+            local m = async.mutex()
+            local o1 = {}
+            local o2 = {}
+            m:lock(o1)
+            local ok, err = pcall(function () m:unlock(o2) end)
+            assert.is_false(ok)
+            assert.is_equal("IllegalState", err.kind)
+            m:unlock(o1)
+        end)
+
+        it("semaphore acquiredPermits", function ()
+            local sem = async.semaphore(5, 4)
+            assert.is_equal(1, sem:available_permits())
+            sem:acquire()
+            assert.is_equal(0, sem:available_permits())
+            assert.is_false(sem:try_acquire())
+            sem:release()
+            assert.is_equal(1, sem:available_permits())
+            assert.is_true(sem:try_acquire())
+        end)
+
+        it("semaphore release too many throws", function ()
+            local sem = async.semaphore(5, 4)
+            for i = 1, 4 do
+                sem:release()
+            end
+            assert.is_equal(5, sem:available_permits())
+            local ok, err = pcall(function () sem:release() end)
+            assert.is_false(ok)
+        end)
+
+        it("mutex initial locked", function ()
+            local m = async.mutex(true)
+            assert.is_true(m:is_locked())
+            m:unlock()
+            assert.is_false(m:is_locked())
+        end)
+    end)
+
+    describe("lazy jobs", function ()
+        it("async_lazy auto starts on await", function ()
+            async.scope(function ()
+                local d = async.async_lazy(function () return 7 end)
+                assert.is_false(d:is_active())
+                assert.is_false(d:is_completed())
+                assert.is_equal(7, async.await(d))
+                assert.is_equal(7, async.await(d))
+            end)
+        end)
+
+        it("launch_lazy cancel before start", function ()
+            async.scope(function ()
+                local job = async.launch_lazy(function () end)
+                assert.is_false(job:is_active())
+                job:cancel()
+                assert.is_true(job:is_cancelled())
+                assert.is_true(job:is_completed())
+                assert.is_false(job:start())
+            end)
+        end)
+
+        it("job:start method schedules lazy", function ()
+            local ran = false
+            async.scope(function ()
+                local job = async.launch_lazy(function ()
+                    ran = true
+                end)
+                assert.is_false(ran)
+                job:start()
+                async.join(job)
+                assert.is_true(ran)
+            end)
         end)
     end)
 end)

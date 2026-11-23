@@ -91,6 +91,20 @@ function Job:is_cancelled() end
 ---@return boolean
 function Job:is_completed() end
 
+--- Start a lazy Job; returns true if it was started now.
+---@return boolean
+function Job:start() end
+
+--- Complete a completable deferred with `value`; returns false if already completed.
+---@param value any
+---@return boolean
+function Job:complete(value) end
+
+--- Complete a completable deferred with a failure; returns false if already completed.
+---@param err luastd.Error
+---@return boolean
+function Job:complete_exceptionally(err) end
+
 --- Run `handler` when this Job ends without completing normally.
 ---@param handler async fun()
 function Job:on_cancel(handler) end
@@ -113,6 +127,13 @@ function Job:on_cancel(handler) end
 ---@return luastd.async.Job
 function async.launch(context_or_body, body) end
 
+--- Launch `body` as a lazy child of the current scope.
+---@overload fun(context: luastd.async.CoroutineContext, body: async fun(scope: luastd.async.Scope)): luastd.async.Job
+---@param context_or_body luastd.async.CoroutineContext | async fun(scope: luastd.async.Scope)
+---@param body?           async fun(scope: luastd.async.Scope)
+---@return luastd.async.Job
+function async.launch_lazy(context_or_body, body) end
+
 --- Wait for each job in argument order without raising child failures.
 --- Like `join`, cancellation of the caller is raised at the current wait.
 ---@async
@@ -124,6 +145,18 @@ function async.join_all(...) end
 ---@param body async fun(scope: luastd.async.Scope): T...
 ---@return luastd.async.Deferred<T...>
 function async.async(body) end
+
+--- Start `body` as a lazy child of the current scope; collect it with `async.await`.
+---@generic T...
+---@param body async fun(scope: luastd.async.Scope): T...
+---@return luastd.async.Deferred<T...>
+function async.async_lazy(body) end
+
+--- Create a deferred whose result is supplied externally via
+--- `deferred:complete`, `deferred:complete_exceptionally`, or
+--- `deferred:cancel`. The first completer wins.
+---@return luastd.async.Deferred<any>
+function async.completable_deferred() end
 
 --- Wait until `job` and its children have finished, however they ended; the
 --- canonical (and only) way to wait for a job. It never raises the job's
@@ -400,5 +433,86 @@ function async.debounce(ms, fn) end
 ---@param fn F
 ---@return F
 function async.throttle(ms, fn) end
+
+--- A mutual-exclusion lock. `lock` waits until the lock is free; `unlock`
+--- releases it. Use `with_lock` to scope the critical section.
+---@class luastd.async.Mutex
+local Mutex = {}
+
+--- Whether this mutex is currently locked.
+---@return boolean
+function Mutex:is_locked() end
+
+--- Acquire the lock, waiting if needed.
+---@async
+---@param owner? any
+function Mutex:lock(owner) end
+
+--- Release the lock.
+---@param owner? any
+function Mutex:unlock(owner) end
+
+--- Try to acquire the lock without waiting.
+---@param owner? any
+---@return boolean
+function Mutex:try_lock(owner) end
+
+--- Whether `owner` currently holds this lock.
+---@param owner any
+---@return boolean
+function Mutex:holds_lock(owner) end
+
+--- Run `body` while holding the lock; the lock is released however `body` ends.
+---@async
+---@param body async fun()
+function Mutex:with_lock(body) end
+
+--- Alias of `lock`.
+---@async
+---@param owner? any
+function Mutex:acquire(owner) end
+
+--- Alias of `unlock`.
+---@param owner? any
+function Mutex:release(owner) end
+
+--- A counting semaphore with `n` permits.
+---@class luastd.async.Semaphore
+local Semaphore = {}
+
+--- Whether this semaphore is currently locked (no permits available).
+---@return boolean
+function Semaphore:is_locked() end
+
+--- Acquire a permit, waiting if none are available.
+---@async
+function Semaphore:acquire() end
+
+--- Release a permit.
+function Semaphore:release() end
+
+--- Try to acquire a permit without waiting.
+---@return boolean
+function Semaphore:try_acquire() end
+
+--- Number of permits currently available.
+---@return integer
+function Semaphore:available_permits() end
+
+--- Run `body` while holding a permit; the permit is released however `body` ends.
+---@async
+---@param body async fun()
+function Semaphore:with_permit(body) end
+
+--- Create a mutex (initially unlocked unless `locked`).
+---@param locked? boolean
+---@return luastd.async.Mutex
+function async.mutex(locked) end
+
+--- Create a semaphore with `n` permits, `acquired` of them already taken.
+---@param n         integer
+---@param acquired? integer
+---@return luastd.async.Semaphore
+function async.semaphore(n, acquired) end
 
 return async
