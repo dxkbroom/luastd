@@ -28,6 +28,10 @@ function flow.from(values)
     end)
 end
 
+function flow.empty()
+    return new_flow(function (emit) end)
+end
+
 function flow.of_one(value)
     return new_flow(function (emit)
         emit(value)
@@ -44,12 +48,13 @@ function Flow:to_list()
     return acc
 end
 
-function Flow:first()
+function Flow:first(pred)
     local result = nil
     local found = false
     local ok, err = pcall(function ()
         self._run(function (v)
-            if not found then
+            if found then return end
+            if pred == nil or pred(v) then
                 result = v
                 found = true
                 error(BREAK)
@@ -59,6 +64,28 @@ function Flow:first()
     if not ok and not rawequal(err, BREAK) then
         error(err, 0)
     end
+    if not found then
+        error("NoSuchElementException")
+    end
+    return result
+end
+
+function Flow:single(pred)
+    local acc = {}
+    self._run(function (v)
+        if pred == nil or pred(v) then table.insert(acc, v) end
+    end)
+    if #acc ~= 1 then
+        error("expected a single value")
+    end
+    return acc[1]
+end
+
+function Flow:last()
+    local result = nil
+    local found = false
+    self._run(function (v) result = v; found = true end)
+    if not found then error("NoSuchElementException") end
     return result
 end
 
@@ -144,9 +171,10 @@ function Flow:take(n)
         local count = 0
         local ok, err = pcall(function ()
             up._run(function (v)
-                if count >= n then error(BREAK) end
+                if count >= n then return end
                 count = count + 1
                 emit(v)
+                if count >= n then error(BREAK) end
             end)
         end)
         if not ok and not rawequal(err, BREAK) then
@@ -380,6 +408,99 @@ function Flow:flat_map_merge(fn)
             for v in ch:iter() do emit(v) end
         end)
     end)
+end
+
+-- ---------- SharedFlow / StateFlow ----------
+
+local function make_shared_flow(sf)
+    return new_flow(function (emit)
+        local ch = async.channel(sf._replay + sf._extra + 1)
+        for _, v in ipairs(sf._replay_buffer) do
+            ch:send(v)
+        end
+        table.insert(sf._subscribers, ch)
+        local ok, err = pcall(function ()
+            for v in ch:iter() do emit(v) end
+        end)
+        -- unregister
+        for i, c in ipairs(sf._subscribers) do
+            if c == ch then table.remove(sf._subscribers, i); break end
+        end
+        if not ok and not rawequal(err, BREAK) then
+            error(err, 0)
+        end
+    end)
+end
+
+function flow.mutable_shared_flow(replay, extra, on_overflow)
+    replay = replay or 0
+    extra = extra or 0
+    local sf = {
+        _replay = replay,
+        _extra = extra,
+        _on_overflow = on_overflow or "SUSPEND",
+        _replay_buffer = {},
+        _subscribers = {},
+    }
+    function sf:emit(value)
+        table.insert(self._replay_buffer, value)
+        while #self._replay_buffer > self._replay do
+            table.remove(self._replay_buffer, 1)
+        end
+        for _, ch in ipairs(self._subscribers) do
+            if self._on_overflow == "DROP_LATEST" then
+                -- best-effort: try send, drop if full
+                local ok = pcall(function () ch:send(value) end)
+                if not ok then end
+            else
+                ch:send(value)
+            end
+        end
+    end
+    function sf:try_emit(value)
+        -- returns true if emitted without suspension
+        local ok = pcall(function () self:emit(value) end)
+        return ok
+    end
+    local f = make_shared_flow(sf)
+    sf._flow = f
+    sf._run = f._run
+    setmetatable(sf, { __index = Flow })
+    sf.as_shared_flow = function () return f end
+    return sf
+end
+
+function flow.mutable_state_flow(initial)
+    local sf = flow.mutable_shared_flow(1, 0, "DROP_OLDEST")
+    -- seed replay buffer
+    sf._replay_buffer = { initial }
+    local state = { _sf = sf, _value = initial, value = initial }
+    function state:get_value()
+        return self.value
+    end
+    function state:set_value(v)
+        self.value = v
+        self._value = v
+        sf._replay_buffer = { v }
+        for _, ch in ipairs(sf._subscribers) do
+            pcall(function () ch:send(v) end)
+        end
+    end
+    function state:update(fn)
+        self:set_value(fn(self:get_value()))
+    end
+    function state:compare_and_set(old, new)
+        if self:get_value() == old then
+            self:set_value(new)
+            return true
+        end
+        return false
+    end
+    -- make it a Flow
+    state._flow = make_shared_flow(sf)
+    state._run = state._flow._run
+    setmetatable(state, { __index = Flow })
+    return state
 end
 
 flow.Flow = Flow

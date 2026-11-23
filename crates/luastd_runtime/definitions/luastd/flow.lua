@@ -18,6 +18,10 @@ function flow.new(body) end
 ---@return luastd.flow.Flow
 function flow.from(values) end
 
+--- Build an empty flow.
+---@return luastd.flow.Flow
+function flow.empty() end
+
 --- Build a flow that emits a single value.
 ---@param value any
 ---@return luastd.flow.Flow
@@ -33,15 +37,22 @@ function Flow:collect(fn) end
 ---@return any[]
 function Flow:to_list() end
 
---- The first value, then cancel upstream.
+--- The first value (or first matching `predicate`), then cancel upstream.
 ---@async
+---@param predicate? fun(value: any): boolean
 ---@return any
-function Flow:first() end
+function Flow:first(predicate) end
 
---- The single value (errors if not exactly one).
+--- The single value (or single matching `predicate`).
+---@async
+---@param predicate? fun(value: any): boolean
+---@return any
+function Flow:single(predicate) end
+
+--- The last value.
 ---@async
 ---@return any
-function Flow:single() end
+function Flow:last() end
 
 --- The number of values.
 ---@async
@@ -186,5 +197,52 @@ function Flow:zip(other, transform) end
 ---@param transform? fun(a: any, b: any): any
 ---@return luastd.flow.Flow
 function Flow:combine(other, transform) end
+
+--- A hot flow that replays the last `replay` values to new subscribers.
+---@class luastd.flow.SharedFlow<T = any>: luastd.flow.Flow
+local SharedFlow = {}
+
+--- Emit a value to all subscribers.
+---@param value any
+function SharedFlow:emit(value) end
+
+--- Try to emit without suspending.
+---@param value any
+---@return boolean
+function SharedFlow:try_emit(value) end
+
+--- The underlying flow (for chaining).
+---@return luastd.flow.Flow
+function SharedFlow:as_shared_flow() end
+
+--- Create a mutable shared flow.
+---@param replay? integer
+---@param extra_buffer? integer
+---@param on_overflow? "SUSPEND"|"DROP_OLDEST"|"DROP_LATEST"
+---@return luastd.flow.SharedFlow
+function flow.mutable_shared_flow(replay, extra_buffer, on_overflow) end
+
+--- A shared flow holding a single state value.
+---@class luastd.flow.StateFlow<T = any>: luastd.flow.SharedFlow
+local StateFlow = {}
+
+--- The current state value.
+---@type any
+StateFlow.value = nil
+
+--- Update the state with `fn(old)`.
+---@param fn fun(old: any): any
+function StateFlow:update(fn) end
+
+--- Set the state if it equals `old`.
+---@param old any
+---@param new any
+---@return boolean
+function StateFlow:compare_and_set(old, new) end
+
+--- Create a mutable state flow seeded with `initial`.
+---@param initial any
+---@return luastd.flow.StateFlow
+function flow.mutable_state_flow(initial) end
 
 return flow
