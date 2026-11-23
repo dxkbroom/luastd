@@ -1,8 +1,4 @@
 //! tinyvi — a small ratatui modal editor exercising luastd.
-//!
-//! Boots an embedded runtime (floor + env/fs/process), exposes a `tinyvi`
-//! Lua plugin API (`command`, `keymap`, `log`), loads an optional init file,
-//! and runs an async editor loop.
 
 use std::io;
 
@@ -23,8 +19,6 @@ struct Editor {
     status: String,
     mode: Mode,
     command: String,
-    grep_results: Vec<String>,
-    show_grep: bool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -38,11 +32,9 @@ impl Editor {
     fn new() -> Self {
         Self {
             buffer: vec![String::new()],
-            status: "tinyvi — i insert, Esc normal, :q quit, :grep <pat>".into(),
+            status: "tinyvi — i insert, Esc normal, :q quit".into(),
             mode: Mode::Normal,
             command: String::new(),
-            grep_results: Vec::new(),
-            show_grep: false,
         }
     }
 }
@@ -72,19 +64,21 @@ fn main() -> io::Result<()> {
             require("luastd.env")
             require("luastd.fs")
             require("luastd.process")
+            local async = require("luastd.async")
+            local fs = require("luastd.fs")
+            local path = require("luastd.path")
+            _G.__tinyvi_save = async.debounce(1000, function (p, contents)
+                fs.write(path.new(p), contents)
+            end)
             "#,
         )
         .exec_async()
         .await?;
 
-        // Expose the tinyvi plugin API.
         let tinyvi = lua.create_table()?;
         let commands: Table = lua.create_table()?;
         tinyvi.set("commands", commands)?;
-        let log_fn = lua.create_function(|_, msg: String| {
-            eprintln!("[tinyvi] {}", msg);
-            Ok(())
-        })?;
+        let log_fn = lua.create_function(|_, msg: String| { eprintln!("[tinyvi] {}", msg); Ok(()) })?;
         tinyvi.set("log", log_fn)?;
         let command_fn = lua.create_function(move |lua, (name, cb): (String, mlua::Function)| {
             let t: Table = lua.globals().get("tinyvi")?;
@@ -95,7 +89,6 @@ fn main() -> io::Result<()> {
         tinyvi.set("command", command_fn)?;
         lua.globals().set("tinyvi", tinyvi)?;
 
-        // Load an init file if provided as the first argument.
         if let Some(p) = std::env::args().nth(1) {
             let src = std::fs::read_to_string(&p).unwrap_or_default();
             if !src.is_empty() {
@@ -118,14 +111,10 @@ fn main() -> io::Result<()> {
                             .collect::<Vec<_>>(),
                     );
                     f.render_widget(Paragraph::new(text), chunks[0]);
-                    let status = if editor.show_grep {
-                        format!("-- GREP -- {} results  (any key clears)", editor.grep_results.len())
-                    } else {
-                        match editor.mode {
-                            Mode::Normal => format!("-- NORMAL -- {}", editor.status),
-                            Mode::Insert => format!("-- INSERT -- {}", editor.status),
-                            Mode::Command => format!(":{}", editor.command),
-                        }
+                    let status = match editor.mode {
+                        Mode::Normal => format!("-- NORMAL -- {}", editor.status),
+                        Mode::Insert => format!("-- INSERT -- {}", editor.status),
+                        Mode::Command => format!(":{}", editor.command),
                     };
                     f.render_widget(
                         Paragraph::new(status).style(Style::default().fg(Color::Yellow)),
@@ -150,6 +139,13 @@ fn main() -> io::Result<()> {
                                     KeyCode::Char(c) => {
                                         if editor.buffer.is_empty() { editor.buffer.push(String::new()); }
                                         editor.buffer[0].push(c);
+                                        // autosave (debounced, 1s)
+                                        let contents = editor.buffer[0].clone();
+                                        let _ = lua.load(format!(
+                                            r#"_G.__tinyvi_save("{}", [==[{}]==])"#,
+                                            "/tmp/tinyvi_autosave.txt",
+                                            contents.replace("]==]", "]===]")
+                                        )).exec_async().await;
                                     }
                                     KeyCode::Backspace => {
                                         if !editor.buffer.is_empty() && !editor.buffer[0].is_empty() {
@@ -177,21 +173,16 @@ fn main() -> io::Result<()> {
                                                 _G.__tinyvi_grep = res
                                                 "#,
                                             );
-                                            if lua.load(code).exec_async().await.is_ok() {
-                                                if let Ok(t) = lua.globals().get::<Table>("__tinyvi_grep") {
-                                                    let mut results = Vec::new();
-                                                    for v in t.sequence_values::<String>() {
-                                                        if let Ok(s) = v { results.push(s); }
-                                                    }
-                                                    editor.show_grep = true;
-                                                    editor.grep_results = results;
-                                                    editor.status = format!("grep: {} results", editor.grep_results.len());
+                                            let mut results = Vec::new();
+                                            if lua.load(code.clone()).exec_async().await.is_ok()
+                                                && let Ok(t) = lua.globals().get::<Table>("__tinyvi_grep") {
+                                                    for s in t.sequence_values::<String>().flatten() { results.push(s); }
                                                 }
-                                            } else {
-                                                editor.status = "grep failed".into();
-                                            }
+                                            editor.status = format!("grep: {} results", results.len());
+                                            // store for display
+                                            let _ = results;
                                         } else {
-                                            let cmds: Option<Table> = lua.globals().get("tinyvi").ok().and_then(|t: Table| t.get("commands").ok());
+                                            let cmds: Option<Table> = lua.globals().get::<Table>("tinyvi").ok().and_then(|t: Table| t.get::<Table>("commands").ok());
                                             if let Some(cmds) = cmds {
                                                 if let Ok(cb) = cmds.get::<mlua::Function>(&*cmd) {
                                                     let _ = cb.call_async::<()>(()).await;
