@@ -38,7 +38,11 @@ mod builder;
 #[cfg(feature = "env")]
 pub mod env;
 pub mod errors;
+#[cfg(feature = "fs")]
+pub mod fs;
 pub mod permissions;
+#[cfg(feature = "process")]
+pub mod process;
 mod prompt;
 mod runtime;
 mod sandbox;
@@ -48,6 +52,10 @@ pub use builder::{Builder, NoPermissions, WithPermissions};
 #[cfg(feature = "env")]
 pub use env::Env;
 pub use errors::LuaError;
+#[cfg(feature = "fs")]
+pub use fs::Fs;
+#[cfg(feature = "process")]
+pub use process::Process;
 pub use prompt::{PromptDecision, PromptRequest, Prompter};
 pub use runtime::Runtime;
 pub use scheduler::{UnhandledHandler, cancel_jobs, cancellable, set_unhandled_handler};

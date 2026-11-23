@@ -33,6 +33,16 @@ const RUNTIME_DEFINITIONS: &[(&str, &str)] = &[
         "luastd/env.lua",
         include_str!("../definitions/luastd/env.lua"),
     ),
+    #[cfg(feature = "fs")]
+    (
+        "luastd/fs.lua",
+        include_str!("../definitions/luastd/fs.lua"),
+    ),
+    #[cfg(feature = "process")]
+    (
+        "luastd/process.lua",
+        include_str!("../definitions/luastd/process.lua"),
+    ),
 ];
 
 /// Every stub as `(path relative to a library root, contents)`: the floor's

@@ -20,7 +20,7 @@ mlua = { workspace = true, features = ["async"] }
 serde_json = { workspace = true }
 sys_traits = { workspace = true }
 # `sync` for Notify, `macros` for select! (cancellation, luastd.async).
-tokio = { workspace = true, features = ["macros", "sync"] }
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "sync"] }
 tokio-util = { workspace = true }
 
 [dev-dependencies]
@@ -31,6 +31,7 @@ tokio = { workspace = true, features = ["time"] }
 [features]
 # Effect modules: compiled in only when the host asks; permissions still apply.
 env = []
+fs = []
 # No default Lua version and no `vendored`: the host picks (AGENTS.md). These
 # only forward to mlua so the crate can be tested and its example run.
 lua52 = ["luastd/lua52", "mlua/lua52"]
@@ -39,6 +40,7 @@ lua54 = ["luastd/lua54", "mlua/lua54"]
 lua55 = ["luastd/lua55", "mlua/lua55"]
 luajit = ["luastd/luajit", "mlua/luajit"]
 luajit52 = ["luastd/luajit52", "mlua/luajit52"]
+process = []
 vendored = ["luastd/vendored", "mlua/vendored"]
 
 # Not `workspace = true`: `Builder::debug` needs one audited `unsafe` call, so
