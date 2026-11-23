@@ -15,7 +15,7 @@ use mlua::{Lua, MultiValue, Result as MluaResult, Table, Value};
 
 use crate::EffectModule;
 use crate::errors::LuaError;
-use crate::prompt::{Descriptor, check, check_now};
+use crate::prompt::{Descriptor, check};
 
 #[cfg(feature = "env")]
 use crate::env::EnvOverlay;
@@ -286,58 +286,6 @@ async fn run_command(
     Ok((pid, code, stdout, stderr))
 }
 
-fn run_command_sync(
-    lua: &Lua,
-    cmd_name: String,
-    args: Vec<String>,
-    opts: ProcessOpts,
-) -> std::result::Result<(i32, String, String), LuaError> {
-    let _ = lua;
-    let mut command = std::process::Command::new(&cmd_name);
-    command.args(&args);
-    if let Some(cwd) = &opts.cwd {
-        command.current_dir(cwd);
-    }
-    #[cfg(feature = "env")]
-    {
-        if let Some(overlay) = lua.app_data_ref::<EnvOverlay>() {
-            for (k, v) in overlay.vars() {
-                command.env(k, v);
-            }
-        }
-    }
-    for (k, v) in &opts.env {
-        command.env(k, v);
-    }
-    command.stdout(std::process::Stdio::piped());
-    command.stderr(std::process::Stdio::piped());
-    if opts.stdin.is_some() {
-        command.stdin(std::process::Stdio::piped());
-    } else {
-        command.stdin(std::process::Stdio::null());
-    }
-
-    let mut child = command
-        .spawn()
-        .map_err(|e| LuaError::new("ProcessError", format!("spawn: {e}")))?;
-
-    if let Some(stdin_data) = &opts.stdin
-        && let Some(mut stdin) = child.stdin.take()
-    {
-        use std::io::Write;
-        let _ = stdin.write_all(stdin_data.as_bytes());
-        drop(stdin);
-    }
-
-    let output = child
-        .wait_with_output()
-        .map_err(|e| LuaError::new("ProcessError", format!("wait: {e}")))?;
-
-    let code = output.status.code().unwrap_or(-1);
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    Ok((code, stdout, stderr))
-}
 
 fn make_result_table(lua: &Lua, code: i32, stdout: String, stderr: String) -> MluaResult<Value> {
     let table = lua.create_table()?;
@@ -366,15 +314,6 @@ impl EffectModule for Process {
                 }
             })?;
             module.set("run", f)?;
-
-            let perms = permissions.clone();
-            let f = lua.create_function(move |lua, args: MultiValue| {
-                let (cmd, args, opts) = parse_call(&args, "run_sync")?;
-                check_now(&perms, ProcessDescriptor(cmd.clone()))?;
-                let (code, stdout, stderr) = run_command_sync(lua, cmd, args, opts)?;
-                make_result_table(lua, code, stdout, stderr)
-            })?;
-            module.set("run_sync", f)?;
 
             let perms = permissions.clone();
             let f = lua.create_async_function(move |lua, args: MultiValue| {

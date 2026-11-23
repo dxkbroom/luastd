@@ -20,8 +20,4 @@ fn process_spec() {
     );
 }
 
-#[test]
-fn run_sync_denial_remembered() {
-    // smoke: allow_all path already covered by spec
-    let _ = PermissionsOptions::default();
-}
+

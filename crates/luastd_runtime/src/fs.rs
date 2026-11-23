@@ -2,10 +2,8 @@
 //!
 //! Filesystem access through permission checks. Every function is
 //! `---@async`: when the host has not decided yet it awaits the host's
-//! [`Prompter`](crate::Prompter). The `*_sync` variants never prompt; a
-//! `prompt` state raises `PermissionDenied`. `try_*` variants return
-//! `true, value` on success or `false, err` on failure and never catch
-//! cancellation.
+//! [`Prompter`](crate::Prompter). `try_*` variants return `true, value` on
+//! success or `false, err` on failure and never catch cancellation.
 
 use std::path::PathBuf;
 use std::time::UNIX_EPOCH;
@@ -15,7 +13,7 @@ use mlua::{Lua, MultiValue, Table, Value};
 
 use crate::EffectModule;
 use crate::errors::LuaError;
-use crate::prompt::{Descriptor, check, check_now};
+use crate::prompt::{Descriptor, check};
 
 use luastd::path::PathLua;
 
@@ -103,11 +101,6 @@ impl EffectModule for Fs {
             module.set("read", f)?;
 
             let perms = permissions.clone();
-            let f =
-                lua.create_function(move |lua, args: MultiValue| read_sync(lua, &perms, &args))?;
-            module.set("read_sync", f)?;
-
-            let perms = permissions.clone();
             let f = lua.create_async_function(move |lua, args: MultiValue| {
                 let perms = perms.clone();
                 async move { try_read_async(&lua, &perms, &args).await }
@@ -123,11 +116,6 @@ impl EffectModule for Fs {
                 async move { write_async(&lua, &perms, &args).await }
             })?;
             module.set("write", f)?;
-
-            let perms = permissions.clone();
-            let f =
-                lua.create_function(move |lua, args: MultiValue| write_sync(lua, &perms, &args))?;
-            module.set("write_sync", f)?;
 
             let perms = permissions.clone();
             let f = lua.create_async_function(move |lua, args: MultiValue| {
@@ -147,11 +135,6 @@ impl EffectModule for Fs {
             module.set("list", f)?;
 
             let perms = permissions.clone();
-            let f =
-                lua.create_function(move |lua, args: MultiValue| list_sync(lua, &perms, &args))?;
-            module.set("list_sync", f)?;
-
-            let perms = permissions.clone();
             let f = lua.create_async_function(move |lua, args: MultiValue| {
                 let perms = perms.clone();
                 async move { try_list_async(&lua, &perms, &args).await }
@@ -167,11 +150,6 @@ impl EffectModule for Fs {
                 async move { stat_async(&lua, &perms, &args).await }
             })?;
             module.set("stat", f)?;
-
-            let perms = permissions.clone();
-            let f =
-                lua.create_function(move |lua, args: MultiValue| stat_sync(lua, &perms, &args))?;
-            module.set("stat_sync", f)?;
 
             let perms = permissions.clone();
             let f = lua.create_async_function(move |lua, args: MultiValue| {
@@ -191,11 +169,6 @@ impl EffectModule for Fs {
             module.set("mkdir", f)?;
 
             let perms = permissions.clone();
-            let f =
-                lua.create_function(move |lua, args: MultiValue| mkdir_sync(lua, &perms, &args))?;
-            module.set("mkdir_sync", f)?;
-
-            let perms = permissions.clone();
             let f = lua.create_async_function(move |lua, args: MultiValue| {
                 let perms = perms.clone();
                 async move { try_mkdir_async(&lua, &perms, &args).await }
@@ -213,11 +186,6 @@ impl EffectModule for Fs {
             module.set("remove", f)?;
 
             let perms = permissions.clone();
-            let f =
-                lua.create_function(move |lua, args: MultiValue| remove_sync(lua, &perms, &args))?;
-            module.set("remove_sync", f)?;
-
-            let perms = permissions.clone();
             let f = lua.create_async_function(move |lua, args: MultiValue| {
                 let perms = perms.clone();
                 async move { try_remove_async(&lua, &perms, &args).await }
@@ -233,11 +201,6 @@ impl EffectModule for Fs {
                 async move { rename_async(&lua, &perms, &args).await }
             })?;
             module.set("rename", f)?;
-
-            let perms = permissions.clone();
-            let f =
-                lua.create_function(move |lua, args: MultiValue| rename_sync(lua, &perms, &args))?;
-            module.set("rename_sync", f)?;
 
             let perms = permissions.clone();
             let f = lua.create_async_function(move |lua, args: MultiValue| {
@@ -346,12 +309,6 @@ async fn read_async(
     Ok(Value::String(lua.create_string(&bytes)?))
 }
 
-fn read_sync(lua: &Lua, perms: &PermissionsContainer, args: &MultiValue) -> mlua::Result<Value> {
-    let path = path_arg(args, 1, "read")?;
-    check_now(perms, FsReadDescriptor(path.clone()))?;
-    let bytes = std::fs::read(&path).map_err(|e| fs_error("read", &path, e))?;
-    Ok(Value::String(lua.create_string(&bytes)?))
-}
 
 async fn try_read_async(
     lua: &Lua,
@@ -387,13 +344,6 @@ async fn write_async(
     Ok(Value::Nil)
 }
 
-fn write_sync(_lua: &Lua, perms: &PermissionsContainer, args: &MultiValue) -> mlua::Result<Value> {
-    let path = path_arg(args, 1, "write")?;
-    let contents = string_arg(args, 2, "write")?;
-    check_now(perms, FsWriteDescriptor(path.clone()))?;
-    std::fs::write(&path, contents).map_err(|e| fs_error("write", &path, e))?;
-    Ok(Value::Nil)
-}
 
 async fn try_write_async(
     lua: &Lua,
@@ -442,23 +392,6 @@ async fn list_async(
     Ok(Value::Table(table))
 }
 
-fn list_sync(lua: &Lua, perms: &PermissionsContainer, args: &MultiValue) -> mlua::Result<Value> {
-    let path = path_arg(args, 1, "list")?;
-    check_now(perms, FsReadDescriptor(path.clone()))?;
-    let rd = std::fs::read_dir(&path).map_err(|e| fs_error("list", &path, e))?;
-    let mut names = Vec::new();
-    for entry in rd {
-        let entry = entry.map_err(|e| fs_error("list", &path, e))?;
-        names.push(entry.file_name().to_string_lossy().to_string());
-    }
-    names.sort();
-    let table = lua.create_table()?;
-    for (i, name) in (1..).zip(names) {
-        let full = path.join(name).to_string_lossy().to_string();
-        table.set(i, lua.create_userdata(PathLua::new(full))?)?;
-    }
-    Ok(Value::Table(table))
-}
 
 async fn try_list_async(
     lua: &Lua,
@@ -554,16 +487,6 @@ async fn stat_async(
     Ok(Value::Table(table))
 }
 
-fn stat_sync(lua: &Lua, perms: &PermissionsContainer, args: &MultiValue) -> mlua::Result<Value> {
-    let path = path_arg(args, 1, "stat")?;
-    check_now(perms, FsReadDescriptor(path.clone()))?;
-    let meta = std::fs::metadata(&path).map_err(|e| fs_error("stat", &path, e))?;
-    let symlink = std::fs::symlink_metadata(&path)
-        .map(|m| m.file_type().is_symlink())
-        .unwrap_or(false);
-    let table = stat_table(lua, &path, meta, symlink)?;
-    Ok(Value::Table(table))
-}
 
 async fn try_stat_async(
     lua: &Lua,
@@ -598,12 +521,6 @@ async fn mkdir_async(
     Ok(Value::Nil)
 }
 
-fn mkdir_sync(_lua: &Lua, perms: &PermissionsContainer, args: &MultiValue) -> mlua::Result<Value> {
-    let path = path_arg(args, 1, "mkdir")?;
-    check_now(perms, FsWriteDescriptor(path.clone()))?;
-    std::fs::create_dir_all(&path).map_err(|e| fs_error("mkdir", &path, e))?;
-    Ok(Value::Nil)
-}
 
 async fn try_mkdir_async(
     lua: &Lua,
@@ -645,19 +562,6 @@ async fn remove_async(
     Ok(Value::Nil)
 }
 
-fn remove_sync(_lua: &Lua, perms: &PermissionsContainer, args: &MultiValue) -> mlua::Result<Value> {
-    let path = path_arg(args, 1, "remove")?;
-    check_now(perms, FsWriteDescriptor(path.clone()))?;
-    let is_dir = std::fs::metadata(&path)
-        .map(|m| m.is_dir())
-        .unwrap_or(false);
-    if is_dir {
-        std::fs::remove_dir_all(&path).map_err(|e| fs_error("remove", &path, e))?;
-    } else {
-        std::fs::remove_file(&path).map_err(|e| fs_error("remove", &path, e))?;
-    }
-    Ok(Value::Nil)
-}
 
 async fn try_remove_async(
     lua: &Lua,
@@ -694,14 +598,6 @@ async fn rename_async(
     Ok(Value::Nil)
 }
 
-fn rename_sync(_lua: &Lua, perms: &PermissionsContainer, args: &MultiValue) -> mlua::Result<Value> {
-    let from = path_arg(args, 1, "rename")?;
-    let to = path_arg(args, 2, "rename")?;
-    check_now(perms, FsWriteDescriptor(from.clone()))?;
-    check_now(perms, FsWriteDescriptor(to.clone()))?;
-    std::fs::rename(&from, &to).map_err(|e| fs_error("rename", &from, e))?;
-    Ok(Value::Nil)
-}
 
 async fn try_rename_async(
     lua: &Lua,

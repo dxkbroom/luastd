@@ -3,7 +3,6 @@
 --- Process spawning, checked against the host's `run` permission.
 ---
 --- The plain functions are async: when the host has not decided yet they wait
---- for its prompt. The `*_sync` variants never wait; an undecided permission
 --- raises `PermissionDenied`. Errors are raised as `luastd.Error` tables
 --- (kind `ProcessError`).
 ---@class luastd.process
@@ -29,13 +28,6 @@ local process = {}
 ---@param opts { cwd?: string | luastd.path.Path, env?: table<string, string>, stdin?: string }?
 ---@return luastd.process.Result
 function process.run(cmd, args, opts) end
-
---- `process.run` without prompting.
----@param cmd  string
----@param args string[]?
----@param opts { cwd?: string | luastd.path.Path, env?: table<string, string>, stdin?: string }?
----@return luastd.process.Result
-function process.run_sync(cmd, args, opts) end
 
 --- Like `process.run`, but returns `true, result` or `false, error`.
 ---@async

@@ -6,9 +6,8 @@
 --- `set` and `unset` only change the overlay: the process environment is
 --- never modified.
 ---
---- The plain functions are async: when the host has not decided yet they wait
---- for its prompt. The `*_sync` variants never wait; an undecided permission
---- raises `PermissionDenied`. Errors are raised as `luastd.Error` tables.
+--- The functions are async: when the host has not decided yet they wait
+--- for its prompt. An undecided permission raises `PermissionDenied`.
 ---@class luastd.env
 local env = {}
 
@@ -39,28 +38,5 @@ function env.unset(name) end
 ---@async
 ---@return table<string, string>
 function env.vars() end
-
---- `env.get` without prompting.
----@param name string
----@return string?
-function env.get_sync(name) end
-
---- `env.has` without prompting.
----@param name string
----@return boolean
-function env.has_sync(name) end
-
---- `env.set` without prompting.
----@param name  string
----@param value string
-function env.set_sync(name, value) end
-
---- `env.unset` without prompting.
----@param name string
-function env.unset_sync(name) end
-
---- `env.vars` without prompting.
----@return table<string, string>
-function env.vars_sync() end
 
 return env

@@ -19,7 +19,7 @@ use mlua::{Lua, MultiValue, Result, Table, Value};
 
 use crate::EffectModule;
 use crate::errors::LuaError;
-use crate::prompt::{EnvDescriptor, check, check_now};
+use crate::prompt::{EnvDescriptor, check};
 
 /// Variables set (`Some`) or unset (`None`) by Lua in this runtime.
 #[derive(Clone, Default, Debug)]
@@ -97,14 +97,6 @@ impl EffectModule for Env {
                 }
             })?;
             module.set(name, get)?;
-
-            let (permissions, overlay) = (permissions.clone(), overlay.clone());
-            let get_sync = lua.create_function(move |lua, args: MultiValue| {
-                let call = parse(op, name, &args)?;
-                check_now(&permissions, EnvDescriptor(call.var()))?;
-                run(lua, &overlay, call)
-            })?;
-            module.set(format!("{name}_sync"), get_sync)?;
         }
         Ok(module)
     }

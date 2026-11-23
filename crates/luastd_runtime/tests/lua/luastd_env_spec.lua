@@ -35,7 +35,6 @@ describe("luastd.env", function ()
         it("asks the host and remembers a grant", function ()
             assert.is_not_nil(env.get("HOME"))
             assert.is_not_nil(env.get("HOME"))
-            assert.is_not_nil(env.get_sync("HOME"))
         end)
 
         it("asks the host and remembers a denial", function ()
@@ -50,14 +49,6 @@ describe("luastd.env", function ()
             end)
             assert.is_equal("InvalidArgument", err.kind)
             assert.is_equal("InvalidArgument", error_of(function () env.get("A=B") end).kind)
-        end)
-    end)
-
-    describe("sync variants", function ()
-        it("never prompt", function ()
-            local err = error_of(function () env.get_sync("LANG") end)
-            assert.is_equal("PermissionDenied", err.kind)
-            assert.matches("use the async variant", err.message, 1, true)
         end)
     end)
 
@@ -77,7 +68,7 @@ describe("luastd.env", function ()
 
     describe("vars", function ()
         it("needs access to every variable", function ()
-            local err = error_of(function () env.vars_sync() end) --[[@as luastd.PermissionDeniedError]]
+            local err = error_of(function () env.vars() end) --[[@as luastd.PermissionDeniedError]]
             assert.is_equal("PermissionDenied", err.kind)
             assert.is_nil(err.target)
         end)

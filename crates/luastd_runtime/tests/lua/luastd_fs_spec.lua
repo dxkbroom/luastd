@@ -22,7 +22,6 @@ describe("luastd.fs", function ()
             local p = base / "rw.txt"
             fs.write(p, "hello")
             assert.is_equal("hello", fs.read(p))
-            assert.is_equal("hello", fs.read_sync(p))
         end)
 
         it("try_read returns ok and value", function ()
@@ -93,15 +92,6 @@ describe("luastd.fs", function ()
             assert.is_true(ok)
             assert.is_nil(v)
             assert.is_equal("y", fs.read(p))
-        end)
-    end)
-
-    describe("sync variants", function ()
-        it("work without prompting", function ()
-            local p = base / "sync.txt"
-            fs.write_sync(p, "s")
-            assert.is_equal("s", fs.read_sync(p))
-            fs.remove_sync(p)
         end)
     end)
 end)
