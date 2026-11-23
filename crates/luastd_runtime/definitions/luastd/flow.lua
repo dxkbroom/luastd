@@ -126,4 +126,65 @@ function Flow:buffer(cap) end
 ---@return luastd.flow.Flow
 function Flow:catch(handler) end
 
+--- Run `inner` for each value and concatenate its emissions.
+---@param fn fun(value: any): luastd.flow.Flow
+---@return luastd.flow.Flow
+function Flow:flat_map_concat(fn) end
+
+--- Run `inner` for each value and merge emissions.
+---@param fn fun(value: any): luastd.flow.Flow
+---@return luastd.flow.Flow
+function Flow:flat_map_merge(fn) end
+
+--- Run `inner` for each value, cancelling the previous inner.
+---@param fn fun(value: any): luastd.flow.Flow
+---@return luastd.flow.Flow
+function Flow:flat_map_latest(fn) end
+
+--- Transform with cancellation of the previous transform.
+---@param fn fun(emit: fun(value: any), value: any)
+---@return luastd.flow.Flow
+function Flow:transform_latest(fn) end
+
+--- Transform while `fn` returns true.
+---@param fn fun(emit: fun(value: any), value: any): boolean?
+---@return luastd.flow.Flow
+function Flow:transform_while(fn) end
+
+--- Emit running accumulator, starting with `initial`.
+---@param initial any
+---@param op fun(acc: any, value: any): any
+---@return luastd.flow.Flow
+function Flow:scan(initial, op) end
+
+--- Retry the flow up to `n` times on error.
+---@param n? integer
+---@return luastd.flow.Flow
+function Flow:retry(n) end
+
+--- Group values into chunks of `size`.
+---@param size integer
+---@return luastd.flow.Flow
+function Flow:chunked(size) end
+
+--- Keep only the latest value when the collector is slow (no-op in sync model).
+---@return luastd.flow.Flow
+function Flow:conflate() end
+
+--- Collect with cancellation of the previous collector (sync: like collect).
+---@param fn fun(value: any)
+function Flow:collect_latest(fn) end
+
+--- Pair values from two flows by index.
+---@param other luastd.flow.Flow
+---@param transform? fun(a: any, b: any): any
+---@return luastd.flow.Flow
+function Flow:zip(other, transform) end
+
+--- Combine latest values from two flows.
+---@param other luastd.flow.Flow
+---@param transform? fun(a: any, b: any): any
+---@return luastd.flow.Flow
+function Flow:combine(other, transform) end
+
 return flow

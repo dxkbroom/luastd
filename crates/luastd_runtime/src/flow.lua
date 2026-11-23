@@ -241,5 +241,146 @@ function Flow:catch(handler)
     end)
 end
 
+-- deferred operators
+function Flow:flat_map_concat(fn)
+    local up = self
+    return new_flow(function (emit)
+        up._run(function (v)
+            local inner = fn(v)
+            inner._run(emit)
+        end)
+    end)
+end
+
+function Flow:flat_map_latest(fn)
+    local up = self
+    return new_flow(function (emit)
+        up._run(function (v)
+            local inner = fn(v)
+            inner._run(emit)
+        end)
+    end)
+end
+
+function Flow:transform_latest(fn)
+    local up = self
+    return new_flow(function (emit)
+        up._run(function (v) fn(emit, v) end)
+    end)
+end
+
+function Flow:transform_while(fn)
+    local up = self
+    return new_flow(function (emit)
+        local cont = true
+        up._run(function (v)
+            if not cont then return end
+            local r = fn(emit, v)
+            if r == false then cont = false end
+        end)
+    end)
+end
+
+function Flow:scan(initial, op)
+    local up = self
+    return new_flow(function (emit)
+        local acc = initial
+        emit(acc)
+        up._run(function (v)
+            acc = op(acc, v)
+            emit(acc)
+        end)
+    end)
+end
+
+function Flow:retry(n)
+    n = n or 1
+    local up = self
+    return new_flow(function (emit)
+        local attempts = 0
+        while true do
+            local ok, err = pcall(function () up._run(emit) end)
+            if ok then break end
+            attempts = attempts + 1
+            if attempts > n then error(err) end
+        end
+    end)
+end
+
+function Flow:chunked(size)
+    local up = self
+    return new_flow(function (emit)
+        local chunk = {}
+        up._run(function (v)
+            table.insert(chunk, v)
+            if #chunk >= size then
+                emit(chunk); chunk = {}
+            end
+        end)
+        if #chunk > 0 then emit(chunk) end
+    end)
+end
+
+function Flow:conflate()
+    -- no-op in the synchronous model (no backpressure to drop)
+    return self
+end
+
+function Flow:collect_latest(fn)
+    -- synchronous collection: behaves like collect
+    self._run(fn)
+end
+
+function Flow:zip(other, transform)
+    local up = self
+    return new_flow(function (emit)
+        local a_vals, b_vals = {}, {}
+        up._run(function (v) table.insert(a_vals, v) end)
+        other._run(function (v) table.insert(b_vals, v) end)
+        local n = math.min(#a_vals, #b_vals)
+        for i = 1, n do
+            if transform then
+                emit(transform(a_vals[i], b_vals[i]))
+            else
+                emit({ a_vals[i], b_vals[i] })
+            end
+        end
+    end)
+end
+
+function Flow:combine(other, transform)
+    local up = self
+    return new_flow(function (emit)
+        local b_vals = {}
+        other._run(function (v) table.insert(b_vals, v) end)
+        local bi = 1
+        up._run(function (a)
+            local b = b_vals[bi] or b_vals[#b_vals]
+            if b ~= nil or #b_vals > 0 then
+                if transform then emit(transform(a, b))
+                else emit({ a, b }) end
+            end
+            bi = bi + 1
+        end)
+    end)
+end
+
+function Flow:flat_map_merge(fn)
+    local up = self
+    return new_flow(function (emit)
+        async.supervisor_scope(function (scope)
+            local ch = async.channel(16)
+            scope:launch(function ()
+                up._run(function (v)
+                    local inner = fn(v)
+                    inner._run(function (iv) ch:send(iv) end)
+                end)
+                ch:close()
+            end)
+            for v in ch:iter() do emit(v) end
+        end)
+    end)
+end
+
 flow.Flow = Flow
 return flow, Flow
