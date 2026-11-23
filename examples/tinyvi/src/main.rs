@@ -107,7 +107,8 @@ fn main() -> io::Result<()> {
                         editor
                             .buffer
                             .iter()
-                            .map(|l| Line::from(l.as_str()))
+                            .enumerate()
+                            .map(|(i, l)| Line::from(format!("{:>4}  {}", i + 1, l)))
                             .collect::<Vec<_>>(),
                     );
                     f.render_widget(Paragraph::new(text), chunks[0]);
