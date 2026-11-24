@@ -165,6 +165,18 @@ function Flow:on_start(fn)
     end)
 end
 
+function Flow:on_empty(fn)
+    local up = self
+    return new_flow(function (emit)
+        local emitted = false
+        up._run(function (v)
+            emitted = true
+            emit(v)
+        end)
+        if not emitted then fn() end
+    end)
+end
+
 function Flow:take(n)
     local up = self
     return new_flow(function (emit)
@@ -190,6 +202,21 @@ function Flow:drop(n)
         up._run(function (v)
             if count < n then count = count + 1
             else emit(v) end
+        end)
+    end)
+end
+
+function Flow:drop_while(pred)
+    local up = self
+    return new_flow(function (emit)
+        local dropping = true
+        up._run(function (v)
+            if dropping and pred(v) then
+                -- drop
+            else
+                dropping = false
+                emit(v)
+            end
         end)
     end)
 end
@@ -336,6 +363,9 @@ function Flow:retry(n)
 end
 
 function Flow:chunked(size)
+    if type(size) ~= "number" or size <= 0 then
+        error("IllegalArgumentException")
+    end
     local up = self
     return new_flow(function (emit)
         local chunk = {}

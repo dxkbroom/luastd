@@ -96,6 +96,11 @@ function Flow:on_completion(fn) end
 ---@return luastd.flow.Flow
 function Flow:on_start(fn) end
 
+--- Run `fn` when the flow completes without emitting any value.
+---@param fn fun()
+---@return luastd.flow.Flow
+function Flow:on_empty(fn) end
+
 --- Take the first `n` values, then cancel upstream.
 ---@param n integer
 ---@return luastd.flow.Flow
@@ -105,6 +110,11 @@ function Flow:take(n) end
 ---@param n integer
 ---@return luastd.flow.Flow
 function Flow:drop(n) end
+
+--- Drop values while the predicate holds.
+---@param predicate fun(value: any): boolean
+---@return luastd.flow.Flow
+function Flow:drop_while(predicate) end
 
 --- Transform with full control over emission.
 ---@param fn fun(emit: fun(value: any), value: any)
