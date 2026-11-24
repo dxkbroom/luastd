@@ -4,19 +4,29 @@ local flow = require("luastd.flow")
 local runtest = require("luastd_test").runtest
 
 describe("IterableMergeTest", function ()
-    it("testMerge", runtest(function ()
-        local sources = {}
-        for value = 1, 100 do sources[#sources + 1] = flow.of_one(value) end
-        local result = flow.merge(sources):to_list()
-        local sum = 0
-        for _, value in ipairs(result) do sum = sum + value end
-        assert.is_equal(5050, sum)
-    end))
+    it(
+        "testMerge",
+        runtest(function ()
+            local sources = {}
+            for value = 1, 100 do
+                sources[#sources + 1] = flow.of_one(value)
+            end
+            local result = flow.merge(sources):to_list()
+            local sum = 0
+            for _, value in ipairs(result) do
+                sum = sum + value
+            end
+            assert.is_equal(5050, sum)
+        end)
+    )
 
-    it("testSingle", runtest(function ()
-        local result = flow.merge({ flow.empty(), flow.of_one(42), flow.empty() }):to_list()
-        assert.same({ 42 }, result)
-    end))
+    it(
+        "testSingle",
+        runtest(function ()
+            local result = flow.merge({ flow.empty(), flow.of_one(42), flow.empty() }):to_list()
+            assert.same({ 42 }, result)
+        end)
+    )
 
     -- not-applicable: flow.merge sends through Channel, which rejects nil;
     -- Lua sequence tables also cannot represent a null source element.
@@ -24,15 +34,18 @@ describe("IterableMergeTest", function ()
 
     -- adapted: use CoroutineName instead of NamedDispatchers to check that a
     -- source's flow_on context is preserved through iterable merge.
-    it("testContext", runtest(function ()
-        local source_context = async.context(async.coroutine_name("source"))
-        local outer_context = async.context(async.coroutine_name("irrelevant"))
-        local source = flow.new(function (emit)
-            emit(async.current_context():coroutine_name())
-        end):flow_on(source_context)
-        local result = flow.merge({ source }):flow_on(outer_context):to_list()
-        assert.same({ "source" }, result)
-    end))
+    it(
+        "testContext",
+        runtest(function ()
+            local source_context = async.context(async.coroutine_name("source"))
+            local outer_context = async.context(async.coroutine_name("irrelevant"))
+            local source = flow.new(function (emit)
+                emit(async.current_context():coroutine_name())
+            end):flow_on(source_context)
+            local result = flow.merge({ source }):flow_on(outer_context):to_list()
+            assert.same({ "source" }, result)
+        end)
+    )
 
     -- not-applicable: Kotlin catches CancellationException from one source so
     -- merge continues; luastd cancellation bypasses the source completion
@@ -46,14 +59,20 @@ describe("IterableMergeTest", function ()
     -- adapted: verify source CoroutineName values survive concurrent merge
     -- under a different outer collection context; dispatcher isolation itself
     -- is not exposed by luastd.
-    it("testIsolatedContext", runtest(function ()
-        local first = flow.new(function (emit)
-            emit(async.current_context():coroutine_name())
-        end):flow_on(async.context(async.coroutine_name("1")))
-        local second = flow.new(function (emit)
-            emit(async.current_context():coroutine_name())
-        end):flow_on(async.context(async.coroutine_name("2")))
-        local result = flow.merge({ first, second }):flow_on(async.context(async.coroutine_name("irrelevant"))):to_list()
-        assert.same({ "1", "2" }, result)
-    end))
+    it(
+        "testIsolatedContext",
+        runtest(function ()
+            local first = flow.new(function (emit)
+                emit(async.current_context():coroutine_name())
+            end):flow_on(async.context(async.coroutine_name("1")))
+            local second = flow.new(function (emit)
+                emit(async.current_context():coroutine_name())
+            end):flow_on(async.context(async.coroutine_name("2")))
+            local result = flow
+                .merge({ first, second })
+                :flow_on(async.context(async.coroutine_name("irrelevant")))
+                :to_list()
+            assert.same({ "1", "2" }, result)
+        end)
+    )
 end)

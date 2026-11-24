@@ -6,32 +6,35 @@ local runtest = require("luastd_test").runtest
 describe("JobStatesTest", function ()
     -- adapted: Job exposes active/completed/cancelled snapshots but no parent
     -- getter or Completing state; verify observable states around child wait.
-    it("testNormalCompletion", runtest(function ()
-        local gate = async.completable_deferred()
-        local child_started = false
-        local job = async.launch_lazy(function (scope)
-            scope:launch(function ()
-                child_started = true
-                assert.is_equal("released", async.await(gate))
+    it(
+        "testNormalCompletion",
+        runtest(function ()
+            local gate = async.completable_deferred()
+            local child_started = false
+            local job = async.launch_lazy(function (scope)
+                scope:launch(function ()
+                    child_started = true
+                    assert.is_equal("released", async.await(gate))
+                end)
             end)
+            assert.is_false(job:is_active())
+            assert.is_false(job:is_completed())
+            assert.is_false(job:is_cancelled())
+
+            assert.is_true(job:start())
+            async.yield()
+            assert.is_true(child_started)
+            assert.is_true(job:is_active())
+            assert.is_false(job:is_completed())
+            assert.is_false(job:is_cancelled())
+
+            assert.is_true(gate:complete("released"))
+            async.join(job)
+            assert.is_false(job:is_active())
+            assert.is_true(job:is_completed())
+            assert.is_false(job:is_cancelled())
         end)
-        assert.is_false(job:is_active())
-        assert.is_false(job:is_completed())
-        assert.is_false(job:is_cancelled())
-
-        assert.is_true(job:start())
-        async.yield()
-        assert.is_true(child_started)
-        assert.is_true(job:is_active())
-        assert.is_false(job:is_completed())
-        assert.is_false(job:is_cancelled())
-
-        assert.is_true(gate:complete("released"))
-        async.join(job)
-        assert.is_false(job:is_active())
-        assert.is_true(job:is_completed())
-        assert.is_false(job:is_cancelled())
-    end))
+    )
 
     -- adapted: let a normal parent's child fail after the parent body returns;
     -- verify the public terminal Job state and runtest's unhandled error capture.
@@ -91,31 +94,34 @@ describe("JobStatesTest", function ()
 
     -- adapted: verify the public state snapshots before cancellation, while a
     -- child is being cancelled, and after the parent Job has joined.
-    it("testCancelling", runtest(function ()
-        local child_started = false
-        local job = async.launch_lazy(function (scope)
-            scope:launch(function ()
-                child_started = true
-                async.await_cancellation()
+    it(
+        "testCancelling",
+        runtest(function ()
+            local child_started = false
+            local job = async.launch_lazy(function (scope)
+                scope:launch(function ()
+                    child_started = true
+                    async.await_cancellation()
+                end)
             end)
-        end)
-        assert.is_false(job:is_active())
-        assert.is_false(job:is_completed())
-        assert.is_false(job:is_cancelled())
-        assert.is_true(job:start())
-        async.yield()
-        assert.is_true(child_started)
-        assert.is_true(job:is_active())
-        assert.is_false(job:is_completed())
-        assert.is_false(job:is_cancelled())
+            assert.is_false(job:is_active())
+            assert.is_false(job:is_completed())
+            assert.is_false(job:is_cancelled())
+            assert.is_true(job:start())
+            async.yield()
+            assert.is_true(child_started)
+            assert.is_true(job:is_active())
+            assert.is_false(job:is_completed())
+            assert.is_false(job:is_cancelled())
 
-        job:cancel()
-        assert.is_false(job:is_active())
-        assert.is_false(job:is_completed())
-        assert.is_true(job:is_cancelled())
-        async.join(job)
-        assert.is_false(job:is_active())
-        assert.is_true(job:is_completed())
-        assert.is_true(job:is_cancelled())
-    end))
+            job:cancel()
+            assert.is_false(job:is_active())
+            assert.is_false(job:is_completed())
+            assert.is_true(job:is_cancelled())
+            async.join(job)
+            assert.is_false(job:is_active())
+            assert.is_true(job:is_completed())
+            assert.is_true(job:is_cancelled())
+        end)
+    )
 end)
