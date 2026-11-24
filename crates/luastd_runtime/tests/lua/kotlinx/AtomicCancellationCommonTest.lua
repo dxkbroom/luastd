@@ -17,24 +17,28 @@ describe("AtomicCancellationCommonTest", function ()
         end)
     )
 
-    -- todo: port this Kotlin test in Lua.
+    -- not-applicable: luastd launch always starts cancellably; it has no
+    -- CoroutineStart.ATOMIC mode that runs a body after cancellation.
     pending("testAtomicLaunch")
 
-    -- todo: port this Kotlin test in Lua.
+    -- not-applicable: luastd has no CoroutineStart.UNDISPATCHED launch mode.
     pending("testUndispatchedLaunch")
 
-    -- todo: port this Kotlin test in Lua.
+    -- not-applicable: luastd has neither undispatched launch nor dispatchers.
     pending("testUndispatchedLaunchWithUnconfinedContext")
 
-    -- todo: port this Kotlin test in Lua.
+    -- not-applicable: the case relies on undispatched launch to queue the
+    -- awaiter before completion; luastd has no undispatched start mode.
     pending("testDeferredAwaitCancellable")
 
-    -- todo: port this Kotlin test in Lua.
+    -- not-applicable: the case relies on undispatched launch to queue the
+    -- joiner before completion; luastd has no undispatched start mode.
     pending("testJobJoinCancellable")
 
-    -- todo: port this Kotlin test in Lua.
+    -- not-applicable: the case relies on undispatched launch and luastd's
+    -- mutex waiters resume according to the executor's scheduled order.
     pending("testLockCancellable")
 
-    -- todo: port this Kotlin test in Lua.
+    -- not-applicable: luastd has no select expression or mutex onLock clause.
     pending("testSelectLockCancellable")
 end)
