@@ -222,9 +222,15 @@ function Flow:scan(initial, op) end
 
 --- Retry the flow up to `n` times on error.
 ---@param n?         integer
----@param predicate? fun(cause: any): boolean
+---@param predicate? fun(cause: any): boolean Retry only when this returns true.
 ---@return luastd.flow.Flow
 function Flow:retry(n, predicate) end
+
+--- Retry after upstream errors while `predicate(cause, attempt)` returns true.
+--- The first attempt number is 0. Errors raised by downstream callbacks are never retried.
+---@param predicate fun(cause: any, attempt: integer): boolean
+---@return luastd.flow.Flow
+function Flow:retry_when(predicate) end
 
 --- Group values into chunks of `size`.
 ---@param size integer

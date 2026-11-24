@@ -76,9 +76,12 @@ describe("SampleTest", function ()
 
     -- adapted: Flow:debounce is lazy in luastd, so validation occurs when
     -- collected; Kotlin validates when constructing the operator.
-    it("testFailsWithIllegalArgument", runtest(function ()
-        local ok, err = pcall(function () flow.empty():debounce(-1):to_list() end)
-        assert.is_false(ok)
-        assert.is_equal("InvalidArgument", err.kind)
-    end))
+    it(
+        "testFailsWithIllegalArgument",
+        runtest(function ()
+            local ok, err = pcall(function () flow.empty():debounce(-1):to_list() end)
+            assert.is_false(ok)
+            assert.is_equal("InvalidArgument", err.kind)
+        end)
+    )
 end)

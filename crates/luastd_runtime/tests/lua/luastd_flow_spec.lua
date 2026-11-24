@@ -67,6 +67,51 @@ describe("luastd.flow", function ()
             assert.is_equal(42, r[1])
         end)
 
+        it("retry predicates do not retry downstream failures", function ()
+            local attempts = 0
+            local predicate_calls = 0
+            local r = flow.new(function (emit)
+                attempts = attempts + 1
+                emit(attempts)
+                if attempts < 2 then error("retry me", 0) end
+            end):retry(2, function (err)
+                predicate_calls = predicate_calls + 1
+                return err == "retry me"
+            end):to_list()
+            assert.is_equal(2, #r)
+            assert.is_equal(2, attempts)
+            assert.is_equal(1, predicate_calls)
+
+            local downstream_calls = 0
+            local ok = pcall(function ()
+                flow.of_one(1):retry(5):map(function ()
+                    downstream_calls = downstream_calls + 1
+                    error("downstream failure")
+                end):to_list()
+            end)
+            assert.is_false(ok)
+            assert.is_equal(1, downstream_calls)
+        end)
+
+        it("retry_when receives zero-based attempt numbers", function ()
+            local attempts = 0
+            local observed = {}
+            local r = flow.new(function (emit)
+                attempts = attempts + 1
+                if attempts < 3 then error("retry me", 0) end
+                emit(42)
+            end):retry_when(function (err, attempt)
+                assert.is_equal("retry me", err)
+                table.insert(observed, attempt)
+                return attempt < 2
+            end):to_list()
+            assert.is_equal(3, attempts)
+            assert.is_equal(2, #observed)
+            assert.is_equal(0, observed[1])
+            assert.is_equal(1, observed[2])
+            assert.is_equal(42, r[1])
+        end)
+
         it("chunked", function ()
             local r = flow.from({ 1, 2, 3, 4, 5 }):chunked(2):to_list()
             assert.is_equal(3, #r)

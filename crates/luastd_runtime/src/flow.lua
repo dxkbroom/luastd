@@ -509,10 +509,57 @@ function Flow:retry(n, predicate)
     return new_flow(function (emit)
         local attempts = 0
         while true do
-            local ok, err = pcall(function () up._run(emit) end)
+            local downstream_failure = {}
+            local downstream_error
+            local downstream_failed = false
+            local ok, err = pcall(function ()
+                up._run(function (value)
+                    local emit_ok, emit_err = pcall(function () emit(value) end)
+                    if not emit_ok then
+                        downstream_failed = true
+                        downstream_error = emit_err
+                        error(downstream_failure, 0)
+                    end
+                end)
+            end)
+            if not ok and rawequal(err, downstream_failure) then error(downstream_error, 0) end
+            if downstream_failed then
+                if not ok then error(err, 0) end
+                error(downstream_error, 0)
+            end
             if ok then break end
             attempts = attempts + 1
-            if attempts > n then error(err) end
+            if attempts > n or (predicate and not predicate(err)) then error(err, 0) end
+        end
+    end)
+end
+
+function Flow:retry_when(predicate)
+    local up = self
+    return new_flow(function (emit)
+        local attempt = 0
+        while true do
+            local downstream_failure = {}
+            local downstream_error
+            local downstream_failed = false
+            local ok, err = pcall(function ()
+                up._run(function (value)
+                    local emit_ok, emit_err = pcall(function () emit(value) end)
+                    if not emit_ok then
+                        downstream_failed = true
+                        downstream_error = emit_err
+                        error(downstream_failure, 0)
+                    end
+                end)
+            end)
+            if not ok and rawequal(err, downstream_failure) then error(downstream_error, 0) end
+            if downstream_failed then
+                if not ok then error(err, 0) end
+                error(downstream_error, 0)
+            end
+            if ok then break end
+            if not predicate(err, attempt) then error(err, 0) end
+            attempt = attempt + 1
         end
     end)
 end
