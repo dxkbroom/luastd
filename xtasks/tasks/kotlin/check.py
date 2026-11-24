@@ -1,6 +1,7 @@
 #!/usr/bin/env -S uv run --project xtasks python
 # MISE description="Report which kotlinx.coroutines tests the Kotlin ports cover (ported/adapted/not-applicable/defer/todo/missing)"
 # USAGE flag "--check" help="Exit 1 if a Kotlin test is missing from its port or a port names a test Kotlin does not have"
+# USAGE flag "--class <name>" help="Check one Kotlin test class"
 # USAGE arg "[FILES]..." help="Port files (default: crates/luastd_runtime/tests/lua/kotlinx/*.lua)"
 """Report coverage of the kotlinx.coroutines test ports."""
 
@@ -32,7 +33,8 @@ KOTLINX = Path(os.environ.get("KOTLINX_DIR") or ROOT.parent / "kotlinx.coroutine
 
 def main(argv: list[str]) -> int:
     check = os.environ.get("usage_check") == "true" or "--check" in argv
-    files = [Path(arg) for arg in argv if not arg.startswith("--")]
+    class_name = os.environ.get("usage_class")
+    files = [Path(file) for file in os.environ.get("usage_files", "").split() if file]
     if not files:
         env_files = os.environ.get("usage_files", "").split()
         files = [Path(file) for file in env_files] or sorted(PORTS.glob("*.lua"))
@@ -42,10 +44,14 @@ def main(argv: list[str]) -> int:
     inventory, _ = kotlin_test_sources(KOTLINX, KOTLIN_TEST_TAG)
     abstract_methods = inherited_test_methods(inventory, kotlin_sources)
     problems = 0
+    found_class = False
     totals: dict[str, int] = {}
     for file in files:
         ports, _ = parse_port(file, lua_sources)
         for port in ports:
+            if class_name and port.cls != class_name:
+                continue
+            found_class = True
             source = kotlin_source(port.path, port.tag, KOTLINX)
             rel = relative(file, ROOT)
             print(f"{port.cls}  ({port.path}@{port.tag} -> {rel})")
@@ -104,7 +110,10 @@ def main(argv: list[str]) -> int:
                 )
             )
         )
-    return 1 if check and problems else 0
+    if class_name and not found_class:
+        print(f"class not found in selected port files: {class_name}", file=sys.stderr)
+        problems += 1
+    return 1 if check and problems else (1 if class_name and not found_class else 0)
 
 
 if __name__ == "__main__":

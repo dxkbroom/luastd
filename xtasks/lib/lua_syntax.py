@@ -87,6 +87,46 @@ class LuaSource:
                 )
         return result
 
+    def trace_events(self, test_name: str) -> list[dict[str, object]] | None:
+        """Return source-ordered expect/finish markers for an active test call."""
+        for describe in self.root.named_children:
+            call = self.call(describe)
+            if call is None or call[0] != "describe":
+                continue
+            function = self.described_function(describe)
+            body = function.child_by_field_name("body") if function else None
+            if body is None:
+                continue
+            test = next(
+                (
+                    item
+                    for item in self.test_calls(body)
+                    if item.kind == "it" and item.name == test_name
+                ),
+                None,
+            )
+            if test is None:
+                continue
+            events = []
+            for node in self.nodes(test.node):
+                if node.type != "function_call":
+                    continue
+                callee = self.first_child(node, "method_index_expression")
+                if callee is None:
+                    continue
+                event_name = self.node_text(callee).rsplit(":", 1)[-1]
+                if event_name not in ("expect", "finish", "expect_unreached"):
+                    continue
+                arguments = self.first_child(node, "arguments")
+                values = [
+                    self.node_text(argument).strip()
+                    for argument in (arguments.named_children if arguments else [])
+                    if argument.type not in ("(", ")")
+                ]
+                events.append({"event": event_name, "args": values})
+            return events
+        return None
+
     def reorder_tests(self, kotlin_tests: list[str]) -> str:
         """Reorder direct test calls while preserving each original source block."""
         if self.root.has_error:

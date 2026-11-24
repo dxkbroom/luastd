@@ -1,6 +1,7 @@
 #!/usr/bin/env -S uv run --project xtasks python
 # MISE description="Generate pending Lua spec ports for unported Kotlin test classes"
 # USAGE flag "--dry-run" help="List stubs that would be generated without writing files"
+# USAGE flag "--class <name>" help="Generate a stub for one Kotlin test class"
 """Generate a pending Lua spec and register it for each unported Kotlin test class."""
 
 from __future__ import annotations
@@ -47,14 +48,31 @@ def main() -> int:
     report = build_report(
         sorted(PORTS.glob("*.lua")), ROOT, KOTLINX, inventory_tag=KOTLIN_TEST_TAG
     )
-    if report["issues"]:
+    class_name = os.environ.get("usage_class")
+    if class_name:
+        relevant_issues = [
+            issue
+            for issue in report["issues"]
+            if issue.get("class") in (None, class_name)
+        ]
+        report["classes"] = [
+            cls for cls in report["classes"] if cls["name"] == class_name
+        ]
+    else:
+        relevant_issues = report["issues"]
+    if relevant_issues:
         print(
-            f"Kotlin inventory has {len(report['issues'])} issue(s); refusing to generate incomplete stubs",
+            f"Kotlin inventory has {len(relevant_issues)} relevant issue(s); refusing to generate incomplete stubs",
             file=sys.stderr,
         )
         return 1
 
     candidates = [cls for cls in report["classes"] if cls["port_status"] == "unported"]
+    if class_name:
+        candidates = [cls for cls in candidates if cls["name"] == class_name]
+        if not candidates:
+            print(f"no unported Kotlin test class named {class_name}", file=sys.stderr)
+            return 1
     generated: list[tuple[Path, dict[str, object]]] = []
     for cls in candidates:
         name = str(cls["name"])

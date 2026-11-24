@@ -404,6 +404,7 @@ def build_report(
             source = source_loader(port.path, port.tag, checkout)
             source_tests: list[str] = []
             source_test_lines: dict[str, int] = {}
+            lua_document = lua_sources.get(file.read_text())
             if source is None:
                 issues.append(
                     Issue(
@@ -489,6 +490,32 @@ def build_report(
             )
             for name in names:
                 test = mapped.get(name)
+                trace = {"status": "unavailable"}
+                if (
+                    source is not None
+                    and test is not None
+                    and test.status
+                    in (
+                        "ported",
+                        "adapted",
+                    )
+                ):
+                    kotlin_trace = kotlin_sources.get(source).trace_events(
+                        port.cls, name
+                    )
+                    lua_trace = lua_document.trace_events(name)
+                    if (
+                        kotlin_trace is not None
+                        and lua_trace is not None
+                        and (kotlin_trace or lua_trace)
+                    ):
+                        trace = {
+                            "status": "matches"
+                            if kotlin_trace == lua_trace
+                            else "differs",
+                            "kotlin": kotlin_trace,
+                            "lua": lua_trace,
+                        }
                 tests.append(
                     {
                         "name": name,
@@ -496,6 +523,7 @@ def build_report(
                         "reason": test.reason or None if test else None,
                         "kotlin_line": source_test_lines.get(name),
                         "lua_line": test.line if test else None,
+                        "trace": trace,
                     }
                 )
             counts = {
@@ -591,7 +619,8 @@ def build_report(
     for item in classes:
         item["counts"]["not_applicable"] = item["counts"].pop("not-applicable")  # type: ignore[index]
     return {
-        "schema_version": 1,
+        "schema_version": 2,
+        "trace_semantics": "Source-ordered marker calls are a review signal, not a claim of behavioral equivalence.",
         "summary": summary,
         "classes": classes,
         "issues": [issue.as_dict() for issue in issues],
@@ -599,16 +628,19 @@ def build_report(
 
 
 def filter_report(
-    report: dict[str, object], selected: set[str] | None
+    report: dict[str, object], selected: set[str] | None, class_name: str | None = None
 ) -> dict[str, object]:
     """Keep only selected test statuses while preserving report diagnostics."""
-    if not selected:
+    if not selected and class_name is None:
         return report
 
     status_keys = [status.replace("-", "_") for status in STATUSES]
+    selected_statuses = selected or set(STATUSES)
     classes = []
     for cls in report["classes"]:
-        tests = [test for test in cls["tests"] if test["status"] in selected]
+        if class_name is not None and cls["name"] != class_name:
+            continue
+        tests = [test for test in cls["tests"] if test["status"] in selected_statuses]
         if not tests and not ("missing" in selected and cls["stale_tests"]):
             continue
         filtered = {**cls, "tests": tests}
@@ -625,12 +657,19 @@ def filter_report(
         "classes": len(classes),
         "unported_classes": sum(cls["port_status"] == "unported" for cls in classes),
         **{key: sum(cls["counts"][key] for cls in classes) for key in status_keys},
-        "issues": report["summary"]["issues"],
+        "issues": 0,
     }
+    issues = [
+        issue
+        for issue in report["issues"]
+        if class_name is None or issue.get("class") in (None, class_name)
+    ]
+    summary["issues"] = len(issues)
     return {
         **report,
         "summary": summary,
         "classes": classes,
+        "issues": issues,
     }
 
 
@@ -650,6 +689,8 @@ def markdown_report(report: dict[str, object]) -> str:
     )
     lines = [
         f"# Kotlin coroutine test ports — {summary['classes']} classes ({summary['unported_classes']} unported)",
+        "",
+        f"> {report['trace_semantics']}",
         "",
         counts,
         "",
@@ -686,9 +727,19 @@ def markdown_report(report: dict[str, object]) -> str:
         )
         for test in cls["tests"]:
             suffix = f" — {test['reason']}" if test["reason"] else ""
+            trace = test.get("trace", {"status": "unavailable"})
+            trace_label = f" · trace {trace['status']}"
             lines.append(
-                f"  - {status_icon[test['status']]} `{test['name']}` — {test['status']}{suffix}"
+                f"  - {status_icon[test['status']]} `{test['name']}` — {test['status']}{suffix}{trace_label}"
             )
+            if trace["status"] in ("matches", "differs"):
+                for language in ("kotlin", "lua"):
+                    events = trace[language]
+                    marker_trace = " → ".join(
+                        f"{event['event']}({', '.join(event['args'])})"
+                        for event in events
+                    )
+                    lines.append(f"    - {language}: `{marker_trace}`")
         for stale in cls["stale_tests"]:
             lines.append(
                 f"  - ✗ `{stale['name']}` — stale mapping (Lua line {stale['line']})"

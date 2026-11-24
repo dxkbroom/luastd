@@ -25,10 +25,10 @@ from lua_syntax import LuaSources
 
 SOURCE = """class ExampleTest {
     @Test
-    fun testKnown() {}
+    fun testKnown() { expect(1); finish(2) }
 
     @Test
-    fun testAdapted() {}
+    fun testAdapted() { expect(1); finish(2) }
 
     @Test
     fun testTodo() {}
@@ -40,9 +40,9 @@ SOURCE = """class ExampleTest {
 
 PORT = """-- kotlin: sample/ExampleTest.kt@1.11.0
 describe("ExampleTest", function ()
-    it("testKnown", function () end)
+    it("testKnown", function () t:expect(1); t:finish(2) end)
     -- adapted: this port exercises the same case with an existing primitive.
-    it("testAdapted", function () end)
+    it("testAdapted", function () t:expect(1); t:finish(3) end)
     -- todo: the API needed by this case is not available.
     pending("testTodo")
     it("testStale", function () end)
@@ -156,6 +156,8 @@ class NestedTest {
         )
         self.assertEqual([{"name": "testStale", "line": 8}], cls["stale_tests"])
         self.assertEqual(1, cls["counts"]["missing"])
+        self.assertEqual("matches", cls["tests"][0]["trace"]["status"])
+        self.assertEqual("differs", cls["tests"][1]["trace"]["status"])
         self.assertEqual(0, report["summary"]["not_applicable"])
         self.assertIn(
             "stale-test-mapping", {issue["code"] for issue in report["issues"]}
@@ -167,7 +169,8 @@ class NestedTest {
             [self.port_file], self.root, self.root, self.source_loader
         )
         decoded = json.loads(json.dumps(report))
-        self.assertEqual(1, decoded["schema_version"])
+        self.assertEqual(2, decoded["schema_version"])
+        self.assertIn("not a claim", decoded["trace_semantics"])
         self.assertIn("not_applicable", decoded["summary"])
         self.assertEqual(
             "sample/ExampleTest.kt", decoded["classes"][0]["kotlin_source"]
@@ -176,6 +179,9 @@ class NestedTest {
         self.assertIn("# Kotlin coroutine test ports", markdown)
         self.assertIn("- **ExampleTest**", markdown)
         self.assertIn("  - ✓ `testKnown` — ported", markdown)
+        self.assertIn("trace matches", markdown)
+        self.assertIn("kotlin: `expect(1) → finish(2)`", markdown)
+        self.assertIn("lua: `expect(1) → finish(2)`", markdown)
         self.assertIn("  - ✗ `testMissing` — missing", markdown)
         self.assertIn("## Issues", markdown)
 

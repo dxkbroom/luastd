@@ -10,6 +10,7 @@
 # USAGE flag "--defer" help="Include tests deferred because the current API cannot support them"
 # USAGE flag "--todo" help="Include unported tests that can be worked on with the current API"
 # USAGE flag "--missing" help="Include Kotlin tests not listed in a Lua port"
+# USAGE flag "--class <name>" help="Show one Kotlin test class"
 """Render current Kotlin coroutine port coverage as a tree, Markdown, or JSON."""
 
 from __future__ import annotations
@@ -84,6 +85,7 @@ def terminal_tree(report: dict[str, object]):
             label = f"{STATUS_SYMBOL[test['status']]} {test['name']}  {test['status']}"
             if test["reason"]:
                 label += f" — {test['reason']}"
+            label += f"  · trace {test['trace']['status']}"
             branch.add(Text(label))
         for stale in cls["stale_tests"]:
             branch.add(
@@ -114,7 +116,8 @@ def main() -> int:
         for status in STATUSES
         if os.environ.get(f"usage_{status.replace('-', '_')}") == "true"
     }
-    report = filter_report(full_report, selected or None)
+    class_name = os.environ.get("usage_class")
+    report = filter_report(full_report, selected or None, class_name)
 
     if os.environ.get("usage_json") == "true":
         print(json.dumps(report, ensure_ascii=False, indent=2))

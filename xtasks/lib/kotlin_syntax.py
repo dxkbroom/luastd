@@ -25,6 +25,7 @@ class KotlinSource:
         self.source = text.encode()
         self.tree = parser.parse(self.source)
         self.has_syntax_error = self.tree.root_node.has_error
+        self._test_nodes: dict[tuple[str, str], Node] = {}
         self.classes = self._classes()
         self.classes_by_name = {item.name: item for item in self.classes}
         self.has_test_functions = any(
@@ -107,6 +108,7 @@ class KotlinSource:
                     test_name = self._test_name(member)
                     if test_name is not None:
                         tests.append((test_name, member.start_point.row + 1))
+                        self._test_nodes[(self._text(name_node), test_name)] = member
             classes.append(
                 KotlinClassInfo(
                     name=self._text(name_node),
@@ -116,6 +118,46 @@ class KotlinSource:
                 )
             )
         return tuple(classes)
+
+    def trace_events(
+        self, class_name: str, test_name: str
+    ) -> list[dict[str, object]] | None:
+        """Return source-ordered expect/finish markers for a test method."""
+        info = self.classes_by_name.get(class_name)
+        if info is None:
+            return None
+        method = self._test_nodes.get((class_name, test_name))
+        if method is None and info.parent is not None:
+            return self.trace_events(info.parent, test_name)
+        if method is None:
+            return None
+
+        events = []
+        for call in self._walk(method):
+            if call.type != "call_expression":
+                continue
+            name = self._first_child(call, "simple_identifier")
+            if name is None:
+                continue
+            event_name = self._text(name)
+            if event_name not in ("expect", "finish", "expectUnreached"):
+                continue
+            suffix = self._first_child(call, "call_suffix")
+            arguments = self._first_child(suffix, "value_arguments") if suffix else None
+            values = [
+                self._text(argument).strip()
+                for argument in (arguments.named_children if arguments else [])
+                if argument.type == "value_argument"
+            ]
+            events.append(
+                {
+                    "event": {"expectUnreached": "expect_unreached"}.get(
+                        event_name, event_name
+                    ),
+                    "args": values,
+                }
+            )
+        return events
 
     def test_methods(
         self,
