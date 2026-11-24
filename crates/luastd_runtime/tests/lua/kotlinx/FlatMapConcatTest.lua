@@ -4,4 +4,9 @@
 describe("FlatMapConcatTest", function ()
     -- defer: concurrency/cancellation semantics.
     pending("testFlatMapConcurrency")
+    pending("testFlatMap")
+    pending("testSingle")
+    pending("testNulls")
+    pending("testContext")
+    pending("testIsolatedContext")
 end)
