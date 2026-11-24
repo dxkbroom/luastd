@@ -8,25 +8,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from kotlin_syntax import KotlinSources
+from lua_syntax import LuaSources
+
 KOTLIN_REF = re.compile(r"^\s*-- kotlin:\s*(\S+)@(\S+)\s*$")
-DESCRIBE = re.compile(r'^\s*describe\(\s*"([^"]+)"')
-TEST = re.compile(r'\b(it|pending)\(\s*"([^"]+)"')
-LUA_TEST_START = re.compile(r"^\s{4}(it|pending)\(")
 MARK = re.compile(r"^\s*--\s*(adapted|not-applicable|defer|todo):\s*(.*)$")
 COMMENT = re.compile(r"^\s*--(.*)$")
-KOTLIN_TEST = re.compile(
-    r"@Test\b[^\n]*\n(?:\s*@[^\n]*\n|\s*//[^\n]*\n|\s*/\*.*?\*/\s*\n)*\s*"
-    r"(?:(?:public|internal|private|open|abstract|override|suspend)\s+)*fun\s+(?:<[^>\n]+>\s*)?`?(\w+)",
-    re.DOTALL,
-)
-KOTLIN_TEST_LINE = re.compile(
-    r"(?m)^\s*(?:(?:public|internal|private|open|abstract|override|suspend)\s+)*"
-    r"fun\s+(?:<[^>\n]+>\s*)?`?(\w+)"
-)
-KOTLIN_CLASS_DECLARATION = re.compile(
-    r"(?m)^(?P<modifiers>(?:(?:public|internal|private|protected|abstract|open|sealed|data|inner)\s+)*)"
-    r"class\s+(?P<name>\w+)(?P<header>[^\n{]*)"
-)
 STATUSES = ("ported", "adapted", "not-applicable", "defer", "todo", "missing")
 KOTLIN_TEST_TAG = "1.11.0"
 KOTLIN_TEST_DIR = "kotlinx-coroutines-core/common/test"
@@ -87,82 +74,90 @@ def reason_above(lines: list[str], index: int) -> tuple[str, str] | None:
     return None
 
 
-def parse_port(file: Path) -> tuple[list[Port], list[Issue]]:
+def parse_port(
+    file: Path, lua_sources: LuaSources | None = None
+) -> tuple[list[Port], list[Issue]]:
     """Parse port classes and return structural issues without losing duplicates."""
     try:
-        lines = file.read_text().splitlines()
+        source_text = file.read_text()
     except OSError as error:
         return [], [Issue("port-unreadable", str(error), file=str(file))]
 
+    lines = source_text.splitlines()
+    document = (lua_sources or LuaSources()).get(source_text)
+    root = document.root
     ports: list[Port] = []
     issues: list[Issue] = []
+    if document.tree.root_node.has_error:
+        issues.append(
+            Issue("lua-syntax-error", "Lua syntax error in port", file=str(file))
+        )
     pending_ref: re.Match[str] | None = None
     current: Port | None = None
     group_mark: tuple[str, str] | None = None
     saw_ref = False
     saw_describe = False
-    for index, line in enumerate(lines):
-        ref = KOTLIN_REF.match(line)
-        if ref:
-            pending_ref = ref
-            saw_ref = True
+    for node in root.named_children:
+        if node.type == "comment":
+            reference = KOTLIN_REF.match(document.node_text(node))
+            if reference:
+                pending_ref = reference
+                saw_ref = True
             continue
-        describe = DESCRIBE.match(line)
-        if describe and pending_ref:
-            current = Port(
-                describe.group(1), pending_ref.group(1), pending_ref.group(2), file
-            )
-            ports.append(current)
-            pending_ref = None
-            group_mark = None
-            saw_describe = True
+
+        call = document.call(node)
+        if call is None or call[0] != "describe" or pending_ref is None:
             continue
-        if current is None:
+        function = document.described_function(node)
+        if function is None:
             continue
-        # luafmt may put the name in the line immediately following `it(`.
-        text = (
-            line
-            if TEST.search(line)
-            else line + (lines[index + 1] if index + 1 < len(lines) else "")
-        )
-        test = TEST.search(text)
-        if not test or not re.match(r"^\s*(it|pending)\(", line):
+        current = Port(call[1], pending_ref.group(1), pending_ref.group(2), file)
+        ports.append(current)
+        pending_ref = None
+        group_mark = None
+        saw_describe = True
+
+        body = function.child_by_field_name("body")
+        if body is None:
             continue
-        kind, name = test.groups()
-        mark = reason_above(lines, index)
-        if kind == "pending":
-            # A status mark above the first of a contiguous run of `pending` lines
-            # covers the whole run, so a group of unported cases shares one reason.
-            previous = TEST.search(lines[index - 1]) if index else None
-            chained = bool(previous and previous.group(1) == "pending")
-            if mark and mark[0] in ("not-applicable", "defer", "todo"):
-                group_mark = mark
-                status, reason = mark
-            elif mark:
-                group_mark = None
-                status, reason = "todo", ""
-            elif chained and group_mark:
-                status, reason = group_mark
-            else:
-                group_mark = None
-                status, reason = "todo", ""
-        else:
-            group_mark = None
-            if mark and mark[0] == "adapted":
-                status, reason = mark
-            else:
-                status, reason = "ported", ""
+        test_calls = document.test_calls(body)
+        calls_by_line = {test.line - 1: test for test in test_calls}
+        for test_call in test_calls:
+            kind, name = test_call.kind, test_call.name
+            index = test_call.line - 1
+            mark = reason_above(lines, index)
+            if kind == "pending":
+                # One mark above the first pending call can cover an adjacent run.
+                previous = calls_by_line.get(index - 1)
+                chained = bool(previous and previous.kind == "pending")
                 if mark and mark[0] in ("not-applicable", "defer", "todo"):
-                    issues.append(
-                        Issue(
-                            "invalid-status-marker",
-                            f"{mark[0]} marker is attached to an active test",
-                            file=str(file),
-                            cls=current.cls,
-                            test=name,
+                    group_mark = mark
+                    status, reason = mark
+                elif mark:
+                    group_mark = None
+                    status, reason = "todo", ""
+                elif chained and group_mark:
+                    status, reason = group_mark
+                else:
+                    group_mark = None
+                    status, reason = "todo", ""
+            else:
+                group_mark = None
+                if mark and mark[0] == "adapted":
+                    status, reason = mark
+                else:
+                    status, reason = "ported", ""
+                    if mark and mark[0] in ("not-applicable", "defer", "todo"):
+                        issues.append(
+                            Issue(
+                                "invalid-status-marker",
+                                f"{mark[0]} marker is attached to an active test",
+                                file=str(file),
+                                cls=current.cls,
+                                test=name,
+                            )
                         )
-                    )
-        current.tests.append(TestPort(name, status, reason, index + 1))
+            current.tests.append(TestPort(name, status, reason, index + 1))
 
     if not saw_ref:
         issues.append(
@@ -189,66 +184,13 @@ def parse_port(file: Path) -> tuple[list[Port], list[Issue]]:
     return ports, issues
 
 
-def reorder_lua_tests(source: str, kotlin_tests: list[str]) -> str:
+def reorder_lua_tests(
+    source: str,
+    kotlin_tests: list[str],
+    lua_sources: LuaSources | None = None,
+) -> str:
     """Reorder top-level Lua test blocks to Kotlin order, preserving block text."""
-    lines = source.splitlines(keepends=True)
-    starts: list[tuple[int, str]] = []
-    for index, line in enumerate(lines):
-        match = LUA_TEST_START.match(line)
-        if not match:
-            continue
-        following = line + (lines[index + 1] if index + 1 < len(lines) else "")
-        test_match = TEST.search(following)
-        if not test_match:
-            continue
-        start = index
-        while (
-            start > 0
-            and re.match(r"^\s{4}--", lines[start - 1])
-            and not MARK.match(lines[start - 1])
-        ):
-            start -= 1
-        starts.append((start, test_match.group(2)))
-    if len(starts) < 2:
-        return source
-
-    blocks: dict[str, str] = {}
-    spans: list[tuple[int, int]] = []
-    final_call_end = 0
-    for position, (start, name) in enumerate(starts):
-        call_line = next(
-            i
-            for i in range(start, len(lines))
-            if LUA_TEST_START.match(lines[i])
-            and TEST.search(lines[i] + (lines[i + 1] if i + 1 < len(lines) else ""))
-        )
-        depth = 0
-        begun = False
-        end = call_line
-        for i in range(call_line, len(lines)):
-            # Strip Lua strings and comments before counting call parentheses.
-            text = re.sub(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|--.*$', "", lines[i])
-            depth += text.count("(") - text.count(")")
-            begun = begun or "(" in text
-            if begun and depth == 0:
-                end = i + 1
-                break
-        final_call_end = end
-        if position + 1 < len(starts):
-            next_start = starts[position + 1][0]
-            end = next_start
-        else:
-            end = final_call_end
-        spans.append((start, end))
-        blocks[name] = "".join(lines[start:end])
-
-    if len(blocks) != len(starts) or any(name not in blocks for name in kotlin_tests):
-        return source
-    ordered = [blocks[name] for name in kotlin_tests if name in blocks]
-    ordered.extend(blocks[name] for _, name in starts if name not in kotlin_tests)
-    first, _ = spans[0]
-    last = final_call_end
-    return "".join(lines[:first] + ["".join(ordered)] + lines[last:])
+    return (lua_sources or LuaSources()).get(source).reorder_tests(kotlin_tests)
 
 
 def kotlin_source(path: str, tag: str, checkout: Path) -> str | None:
@@ -337,76 +279,37 @@ def kotlin_class_test_methods(
     source: str,
     cls: str,
     abstract_methods: dict[str, list[str]] | None = None,
+    kotlin_sources: KotlinSources | None = None,
 ) -> list[str]:
     """Return a class's @Test methods, including methods inherited from abstract bases."""
-    declarations = list(KOTLIN_CLASS_DECLARATION.finditer(source))
-    direct_tests: dict[str, list[str]] = {
-        decl.group("name"): [] for decl in declarations
-    }
-    parents: dict[str, str | None] = {}
-    for declaration in declarations:
-        name = declaration.group("name")
-        parent = re.search(r":\s*([A-Za-z_]\w*)", declaration.group("header"))
-        parents[name] = parent.group(1) if parent else None
-
-    for test in KOTLIN_TEST.finditer(source):
-        owners = [decl for decl in declarations if decl.start() < test.start()]
-        if owners:
-            direct_tests[owners[-1].group("name")].append(test.group(1))
-
-    def inherited_tests(name: str, visiting: frozenset[str] = frozenset()) -> list[str]:
-        if name in visiting:
-            return direct_tests[name]
-        result = list(direct_tests[name])
-        parent = parents[name]
-        if parent in direct_tests:
-            result.extend(inherited_tests(parent, visiting | {name}))
-        elif abstract_methods and parent in abstract_methods:
-            result.extend(abstract_methods[parent])
-        return list(dict.fromkeys(result))
-
-    return inherited_tests(cls) if cls in direct_tests else []
+    documents = kotlin_sources or KotlinSources()
+    return documents.get(source).test_methods(cls, abstract_methods)
 
 
 def kotlin_test_classes(
     source: str,
     abstract_methods: dict[str, list[str]] | None = None,
+    kotlin_sources: KotlinSources | None = None,
 ) -> list[tuple[str, list[str]]]:
     """Associate @Test methods with concrete classes, including inherited methods."""
-    declarations = list(KOTLIN_CLASS_DECLARATION.finditer(source))
-    result: list[tuple[str, list[str]]] = []
-    for declaration in declarations:
-        name = declaration.group("name")
-        test_names = kotlin_class_test_methods(source, name, abstract_methods)
-        if test_names and "abstract" not in declaration.group("modifiers").split():
-            result.append((name, test_names))
-    return result
+    documents = kotlin_sources or KotlinSources()
+    return documents.get(source).test_classes(abstract_methods)
 
 
 def inherited_test_methods(
     sources: list[tuple[str, str | None]],
+    kotlin_sources: KotlinSources | None = None,
 ) -> dict[str, list[str]]:
     """Collect abstract test methods so subclasses in other files can inherit them."""
+    documents = kotlin_sources or KotlinSources()
     abstract_tests: dict[str, list[str]] = {}
     parents: dict[str, str | None] = {}
     for _path, source in sources:
         if source is None:
             continue
-        declarations = list(KOTLIN_CLASS_DECLARATION.finditer(source))
-        direct = {decl.group("name"): [] for decl in declarations}
-        for declaration in declarations:
-            name = declaration.group("name")
-            if "abstract" in declaration.group("modifiers").split():
-                parent = re.search(r":\s*([A-Za-z_]\w*)", declaration.group("header"))
-                parents[name] = parent.group(1) if parent else None
-        for test in KOTLIN_TEST.finditer(source):
-            owners = [decl for decl in declarations if decl.start() < test.start()]
-            if owners:
-                direct[owners[-1].group("name")].append(test.group(1))
-        for declaration in declarations:
-            name = declaration.group("name")
-            if "abstract" in declaration.group("modifiers").split():
-                abstract_tests[name] = direct[name]
+        tests, source_parents = documents.get(source).abstract_methods()
+        abstract_tests.update(tests)
+        parents.update(source_parents)
 
     def resolve(name: str, visiting: frozenset[str] = frozenset()) -> list[str]:
         if name in visiting:
@@ -418,6 +321,14 @@ def inherited_test_methods(
         return result
 
     return {name: resolve(name) for name in abstract_tests}
+
+
+def kotlin_test_lines(
+    source: str, kotlin_sources: KotlinSources | None = None
+) -> dict[str, int]:
+    """Return source line numbers for directly declared @Test methods."""
+    documents = kotlin_sources or KotlinSources()
+    return documents.get(source).test_lines()
 
 
 def render_kotlin_stub(name: str, source: str, tag: str, tests: list[str]) -> str:
@@ -452,16 +363,18 @@ def build_report(
     """Create the JSON-ready coverage report and its validation issues."""
     classes: list[dict[str, object]] = []
     issues: list[Issue] = []
+    lua_sources = LuaSources()
+    kotlin_sources = KotlinSources()
     seen_classes: dict[str, str] = {}
     inventory: list[tuple[str, str | None]] = []
     abstract_methods: dict[str, list[str]] = {}
     if inventory_tag is not None:
         inventory, inventory_issues = kotlin_test_sources(checkout, inventory_tag)
         issues.extend(inventory_issues)
-        abstract_methods = inherited_test_methods(inventory)
+        abstract_methods = inherited_test_methods(inventory, kotlin_sources)
 
     for file in sorted(files):
-        parsed, parse_issues = parse_port(file)
+        parsed, parse_issues = parse_port(file, lua_sources)
         issues.extend(
             Issue(
                 issue.code,
@@ -501,7 +414,17 @@ def build_report(
                     )
                 )
             else:
-                if not re.search(rf"\bclass\s+{re.escape(port.cls)}\b", source):
+                kotlin_document = kotlin_sources.get(source)
+                if kotlin_document.has_syntax_error:
+                    issues.append(
+                        Issue(
+                            "kotlin-syntax-error",
+                            f"Tree-sitter reported a syntax error in {port.path}@{port.tag}",
+                            file=lua_file,
+                            cls=port.cls,
+                        )
+                    )
+                if port.cls not in kotlin_document.classes_by_name:
                     issues.append(
                         Issue(
                             "kotlin-class-missing",
@@ -510,13 +433,8 @@ def build_report(
                             cls=port.cls,
                         )
                     )
-                source_tests = kotlin_class_test_methods(
-                    source, port.cls, abstract_methods
-                )
-                source_test_lines = {
-                    match.group(1): source.count("\n", 0, match.start()) + 1
-                    for match in KOTLIN_TEST_LINE.finditer(source)
-                }
+                source_tests = kotlin_document.test_methods(port.cls, abstract_methods)
+                source_test_lines = kotlin_document.test_lines()
 
             mapped: dict[str, TestPort] = {}
             for test in port.tests:
@@ -602,11 +520,20 @@ def build_report(
         for path, source in inventory:
             if source is None:
                 continue
-            test_classes = kotlin_test_classes(source, abstract_methods)
+            kotlin_document = kotlin_sources.get(source)
+            if kotlin_document.has_syntax_error:
+                issues.append(
+                    Issue(
+                        "kotlin-syntax-error",
+                        f"Tree-sitter reported a syntax error in {path}@{inventory_tag}",
+                        file=path,
+                    )
+                )
+            test_classes = kotlin_document.test_classes(abstract_methods)
             if (
                 not test_classes
-                and KOTLIN_TEST.search(source)
-                and not KOTLIN_CLASS_DECLARATION.search(source)
+                and kotlin_document.has_test_functions
+                and not kotlin_document.classes
             ):
                 issues.append(
                     Issue(

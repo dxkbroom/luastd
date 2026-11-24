@@ -9,25 +9,25 @@ describe("SingleTest", function ()
         assert.is_equal(1, flow.from({ 1 }):single())
     end)
 
-    it("testNoValues", function ()
-        local ok = pcall(function () flow.empty():single() end)
-        assert.is_false(ok)
-    end)
-
     it("testMultipleValues", function ()
         local ok = pcall(function () flow.from({ 1, 2 }):single() end)
         assert.is_false(ok)
     end)
 
     -- defer: nil elements are not representable in a Lua table (ipairs stops at nil).
+    it("testNoValues", function ()
+        local ok = pcall(function () flow.empty():single() end)
+        assert.is_false(ok)
+    end)
+
+    pending("testException")
+    pending("testExceptionAfterValue")
     pending("testNullableSingle")
 
+    pending("testBadClass")
     it("testSingleNoWait", function ()
         assert.is_equal(1, flow.from({ 1 }):single())
     end)
 
     -- defer: exception propagation semantics.
-    pending("testException")
-    pending("testExceptionAfterValue")
-    pending("testBadClass")
 end)

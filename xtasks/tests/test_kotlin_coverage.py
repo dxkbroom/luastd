@@ -13,10 +13,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 from kotlin_coverage import (
     build_report,
     has_gaps,
+    kotlin_class_test_methods,
+    kotlin_test_classes,
     markdown_report,
     parse_port,
     render_kotlin_stub,
+    reorder_lua_tests,
 )
+from kotlin_syntax import KotlinSources
+from lua_syntax import LuaSources
 
 SOURCE = """class ExampleTest {
     @Test
@@ -55,6 +60,12 @@ class KotlinCoverageTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
+    def test_source_caches_reuse_parsed_lua_and_kotlin_documents(self) -> None:
+        lua_sources = LuaSources()
+        kotlin_sources = KotlinSources()
+        self.assertIs(lua_sources.get(PORT), lua_sources.get(PORT))
+        self.assertIs(kotlin_sources.get(SOURCE), kotlin_sources.get(SOURCE))
+
     def source_loader(self, path: str, tag: str, checkout: Path) -> str | None:
         self.assertEqual("sample/ExampleTest.kt", path)
         self.assertEqual("1.11.0", tag)
@@ -79,6 +90,59 @@ class KotlinCoverageTests(unittest.TestCase):
             [(test.name, test.status, test.reason) for test in ports[0].tests],
         )
         self.assertTrue(all(test.line > 0 for test in ports[0].tests))
+
+    def test_parse_port_reads_multiline_calls_from_lua_syntax_tree(self) -> None:
+        self.port_file.write_text("""-- kotlin: sample/ExampleTest.kt@1.11.0
+describe("ExampleTest", function ()
+    it(
+        "testKnown",
+        function ()
+            local value = "parentheses () are string content"
+            assert(value ~= "")
+        end
+    )
+end)
+""")
+        ports, issues = parse_port(self.port_file)
+        self.assertEqual([], issues)
+        self.assertEqual(["testKnown"], [test.name for test in ports[0].tests])
+
+    def test_reorder_lua_tests_uses_call_nodes_for_nested_parentheses(self) -> None:
+        source = """describe("ExampleTest", function ()
+    it("testSecond", function ()
+        local value = "closing ) characters"
+        helper(function () return value end)
+    end)
+    it("testFirst", function () end)
+end)
+"""
+        reordered = reorder_lua_tests(source, ["testFirst", "testSecond"])
+        self.assertLess(
+            reordered.index('it("testFirst"'), reordered.index('it("testSecond"')
+        )
+
+    def test_kotlin_tree_sitter_tracks_annotations_and_nested_classes(self) -> None:
+        source = """open class BaseTest {
+    @kotlin.test.Test
+    fun testBase() { fun helper() {} }
+}
+
+class DerivedTest : BaseTest()
+
+class NestedTest {
+    @Test
+    fun testNested() {}
+}
+"""
+        self.assertEqual(["testBase"], kotlin_class_test_methods(source, "DerivedTest"))
+        self.assertEqual(
+            [
+                ("BaseTest", ["testBase"]),
+                ("DerivedTest", ["testBase"]),
+                ("NestedTest", ["testNested"]),
+            ],
+            kotlin_test_classes(source),
+        )
 
     def test_report_includes_statuses_missing_and_stale_tests(self) -> None:
         report = build_report(

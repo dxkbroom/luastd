@@ -15,7 +15,7 @@ describe("ReduceTest", function ()
     end)
 
     -- defer: error/null semantics.
-    pending("testErrorCancelsUpstream")
     pending("testNullableReduce")
     pending("testReduceNulls")
+    pending("testErrorCancelsUpstream")
 end)

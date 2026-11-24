@@ -23,6 +23,8 @@ from kotlin_coverage import (
     parse_port,
     relative,
 )
+from kotlin_syntax import KotlinSources
+from lua_syntax import LuaSources
 
 PORTS = ROOT / "crates/luastd_runtime/tests/lua/kotlinx"
 KOTLINX = Path(os.environ.get("KOTLINX_DIR") or ROOT.parent / "kotlinx.coroutines")
@@ -35,12 +37,14 @@ def main(argv: list[str]) -> int:
         env_files = os.environ.get("usage_files", "").split()
         files = [Path(file) for file in env_files] or sorted(PORTS.glob("*.lua"))
 
+    lua_sources = LuaSources()
+    kotlin_sources = KotlinSources()
     inventory, _ = kotlin_test_sources(KOTLINX, KOTLIN_TEST_TAG)
-    abstract_methods = inherited_test_methods(inventory)
+    abstract_methods = inherited_test_methods(inventory, kotlin_sources)
     problems = 0
     totals: dict[str, int] = {}
     for file in files:
-        ports, _ = parse_port(file)
+        ports, _ = parse_port(file, lua_sources)
         for port in ports:
             source = kotlin_source(port.path, port.tag, KOTLINX)
             rel = relative(file, ROOT)
@@ -52,7 +56,9 @@ def main(argv: list[str]) -> int:
             if not re.search(rf"\bclass\s+{re.escape(port.cls)}\b", source):
                 print(f"  ! no class {port.cls} in {port.path}")
                 problems += 1
-            kotlin_tests = kotlin_class_test_methods(source, port.cls, abstract_methods)
+            kotlin_tests = kotlin_class_test_methods(
+                source, port.cls, abstract_methods, kotlin_sources
+            )
             mapped = {test.name: (test.status, test.reason) for test in port.tests}
             for name in kotlin_tests:
                 status, reason = mapped.get(name, ("missing", ""))

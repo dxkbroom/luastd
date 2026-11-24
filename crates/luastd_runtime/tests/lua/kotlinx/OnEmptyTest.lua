@@ -20,8 +20,8 @@ describe("OnEmptyTest", function ()
     end)
 
     -- defer: cancellation/error semantics.
-    pending("testOnEmptyCancellation")
-    pending("testOnEmptyNotInvokedOnCancellation")
     pending("testOnEmptyNotInvokedOnError")
+    pending("testOnEmptyNotInvokedOnCancellation")
+    pending("testOnEmptyCancellation")
     pending("testTransparencyViolation")
 end)

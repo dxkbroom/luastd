@@ -9,13 +9,13 @@ describe("LastTest", function ()
         assert.is_equal(3, flow.from({ 1, 2, 3 }):last())
     end)
 
+    pending("testNulls")
+    pending("testNullsLastOrNull")
     it("testEmptyFlow", function ()
         local ok = pcall(function () flow.empty():last() end)
         assert.is_false(ok)
     end)
 
     -- defer: lastOrNull not implemented.
-    pending("testNulls")
-    pending("testNullsLastOrNull")
     pending("testBadClass")
 end)

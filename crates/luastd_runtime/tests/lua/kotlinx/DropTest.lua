@@ -18,8 +18,8 @@ describe("DropTest", function ()
     end)
 
     -- defer: error propagation semantics.
+    pending("testNegativeCount")
     pending("testErrorCancelsUpstream")
 
     -- not-applicable: negative count handling differs.
-    pending("testNegativeCount")
 end)

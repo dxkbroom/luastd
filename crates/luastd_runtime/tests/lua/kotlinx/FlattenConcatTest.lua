@@ -2,6 +2,10 @@
 -- kotlin: kotlinx-coroutines-core/common/test/flow/operators/FlattenConcatTest.kt@1.11.0
 describe("FlattenConcatTest", function ()
     -- todo: port this Kotlin test in Lua.
+    pending("testFlatMapConcurrency")
+
+    -- todo: port this Kotlin test in Lua.
+    pending("testCancellation")
     pending("testFlatMap")
 
     -- todo: port this Kotlin test in Lua.
@@ -17,8 +21,4 @@ describe("FlattenConcatTest", function ()
     pending("testIsolatedContext")
 
     -- todo: port this Kotlin test in Lua.
-    pending("testFlatMapConcurrency")
-
-    -- todo: port this Kotlin test in Lua.
-    pending("testCancellation")
 end)

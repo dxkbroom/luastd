@@ -17,14 +17,14 @@ describe("ChunkedTest", function ()
         assert.is_equal(0, #r)
     end)
 
+    pending("testChunkedCancelled")
+    pending("testChunkedCancelledWithSuspension")
+    pending("testChunkedDoesNotIgnoreCancellation")
     it("testIae", function ()
         local ok = pcall(function () flow.from({ 1, 2 }):chunked(0) end)
         assert.is_false(ok)
     end)
 
     -- defer: cancellation semantics.
-    pending("testChunkedCancelled")
-    pending("testChunkedCancelledWithSuspension")
-    pending("testChunkedDoesNotIgnoreCancellation")
     pending("testSample")
 end)

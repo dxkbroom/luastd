@@ -5,6 +5,7 @@ local flow = require("luastd.flow")
 
 -- kotlin: kotlinx-coroutines-core/common/test/flow/operators/RetryTest.kt@1.11.0
 describe("RetryTest", function ()
+    pending("testRetryWhen")
     it("testRetry", function ()
         local attempts = 0
         local r = flow.new(function (emit)
@@ -28,11 +29,10 @@ describe("RetryTest", function ()
     end)
 
     -- defer: cancellation/error/downstream semantics.
-    pending("testCancellationFromUpstreamIsNotRetried")
     pending("testRetryExceptionFromDownstream")
-    pending("testRetryWhen")
-    pending("testUpstreamCancellationIsIgnoredWhenDownstreamFails")
+    pending("testWithTimeoutRetried")
+    pending("testCancellationFromUpstreamIsNotRetried")
     pending("testUpstreamExceptionConcurrentWithDownstream")
     pending("testUpstreamExceptionConcurrentWithDownstreamCancellation")
-    pending("testWithTimeoutRetried")
+    pending("testUpstreamCancellationIsIgnoredWhenDownstreamFails")
 end)

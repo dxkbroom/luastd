@@ -2,6 +2,16 @@
 -- kotlin: kotlinx-coroutines-core/common/test/flow/operators/FlatMapMergeFastPathTest.kt@1.11.0
 describe("FlatMapMergeFastPathTest", function ()
     -- todo: port this Kotlin test in Lua.
+    pending("testFlatMapConcurrency")
+
+    -- todo: port this Kotlin test in Lua.
+    pending("testCancellationExceptionDownstream")
+
+    -- todo: port this Kotlin test in Lua.
+    pending("testCancellationExceptionUpstream")
+
+    -- todo: port this Kotlin test in Lua.
+    pending("testCancellation")
     pending("testFailureCancellation")
 
     -- todo: port this Kotlin test in Lua.
@@ -9,9 +19,6 @@ describe("FlatMapMergeFastPathTest", function ()
 
     -- todo: port this Kotlin test in Lua.
     pending("testFailureInMapOperationCancellation")
-
-    -- todo: port this Kotlin test in Lua.
-    pending("testFlatMapConcurrency")
 
     -- todo: port this Kotlin test in Lua.
     pending("testFlatMap")
@@ -29,11 +36,4 @@ describe("FlatMapMergeFastPathTest", function ()
     pending("testIsolatedContext")
 
     -- todo: port this Kotlin test in Lua.
-    pending("testCancellationExceptionDownstream")
-
-    -- todo: port this Kotlin test in Lua.
-    pending("testCancellationExceptionUpstream")
-
-    -- todo: port this Kotlin test in Lua.
-    pending("testCancellation")
 end)

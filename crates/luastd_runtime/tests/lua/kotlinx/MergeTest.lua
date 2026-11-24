@@ -17,9 +17,9 @@ describe("MergeTest", function ()
     end)
 
     -- defer: cancellation/context semantics.
-    pending("testContext")
-    pending("testIsolatedContext")
     pending("testNulls")
+    pending("testContext")
     pending("testOneSourceCancelled")
     pending("testOneSourceCancelledNonFused")
+    pending("testIsolatedContext")
 end)

@@ -21,6 +21,8 @@ from kotlin_coverage import (
     parse_port,
     reorder_lua_tests,
 )
+from kotlin_syntax import KotlinSources
+from lua_syntax import LuaSources
 
 PORTS = ROOT / "crates/luastd_runtime/tests/lua/kotlinx"
 KOTLINX = Path(os.environ.get("KOTLINX_DIR") or ROOT.parent / "kotlinx.coroutines")
@@ -33,11 +35,13 @@ def main(argv: list[str]) -> int:
         files = [Path(file) for file in env_files]
     if not files:
         files = sorted(PORTS.glob("*.lua"))
+    lua_sources = LuaSources()
+    kotlin_sources = KotlinSources()
     inventory, _ = kotlin_test_sources(KOTLINX, KOTLIN_TEST_TAG)
-    abstract_methods = inherited_test_methods(inventory)
+    abstract_methods = inherited_test_methods(inventory, kotlin_sources)
     failed = False
     for file in files:
-        ports, issues = parse_port(file)
+        ports, issues = parse_port(file, lua_sources)
         if issues:
             print(
                 f"skip {file}: " + "; ".join(issue.message for issue in issues),
@@ -55,7 +59,9 @@ def main(argv: list[str]) -> int:
                 failed = True
                 updated = ""
                 break
-            expected = kotlin_class_test_methods(source, port.cls, abstract_methods)
+            expected = kotlin_class_test_methods(
+                source, port.cls, abstract_methods, kotlin_sources
+            )
             mapped = {test.name for test in port.tests}
             if set(expected) != mapped:
                 print(
@@ -65,7 +71,7 @@ def main(argv: list[str]) -> int:
                 failed = True
                 updated = ""
                 break
-            updated = reorder_lua_tests(updated, expected)
+            updated = reorder_lua_tests(updated, expected, lua_sources)
         if updated and updated != file.read_text():
             file.write_text(updated)
             print(f"formatted {file}")
