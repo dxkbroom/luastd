@@ -9,12 +9,12 @@ local Flow = {}
 local flow = {}
 
 --- Build a flow whose `body` receives an `emit` function and may suspend.
----@param body async fun(emit: fun(value: any))
 ---@return luastd.flow.Flow
+---@param body async fun(emit: fun(value: any))
 function flow.new(body) end
 
 --- Build a flow from a table of values.
----@param values any[]
+---@param values table<integer, any>
 ---@return luastd.flow.Flow
 function flow.from(values) end
 
@@ -43,7 +43,7 @@ function Flow:with_index() end
 
 --- Collect all values into a table.
 ---@async
----@return any[]
+---@return table<integer, any>
 function Flow:to_list() end
 
 --- The first value (or first matching `predicate`), then cancel upstream.
