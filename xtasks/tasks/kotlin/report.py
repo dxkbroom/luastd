@@ -1,8 +1,4 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.10"
-# dependencies = ["rich>=14,<15"]
-# ///
+#!/usr/bin/env -S uv run --project xtasks python
 #MISE description="Render a structured report of kotlinx.coroutines test ports"
 #USAGE flag "--json" help="Write the report as JSON"
 #USAGE flag "--markdown" help="Write the report as nested Markdown"

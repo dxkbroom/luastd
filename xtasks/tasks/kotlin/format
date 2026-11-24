@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --project xtasks python
 #MISE description="Reorder Lua Kotlin test ports to match Kotlin source order"
 #USAGE arg "[FILES]..." help="Port files (default: crates/luastd_runtime/tests/lua/kotlinx/*.lua)"
 """Reorder test blocks in Lua ports to match their referenced Kotlin source."""

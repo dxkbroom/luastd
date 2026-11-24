@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --project xtasks python
 #MISE description="Rewrite `local cases = { {name=, run=} }` busted specs into describe/it blocks"
 #USAGE flag "--check" help="Only report which files would change; exit 1 if any would"
 #USAGE flag "--no-group" help="Don't nest cases into describe blocks by their first word"

@@ -1,7 +1,4 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.10"
-# ///
+#!/usr/bin/env -S uv run --project xtasks python
 #MISE description="Generate pending Lua spec ports for unported Kotlin test classes"
 #USAGE flag "--dry-run" help="List stubs that would be generated without writing files"
 """Generate a pending Lua spec and register it for each unported Kotlin test class."""
