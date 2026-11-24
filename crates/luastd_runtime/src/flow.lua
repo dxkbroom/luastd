@@ -15,9 +15,14 @@ end
 local flow = {}
 
 function flow.new(body)
-    return new_flow(function (emit)
-        body(emit)
+    local result = new_flow(function (emit)
+        body(function (value)
+            async.ensure_active()
+            emit(value)
+        end)
     end)
+    result._cancellable = true
+    return result
 end
 
 function flow.from(values)
@@ -123,28 +128,32 @@ function Flow:count()
     return n
 end
 
-function Flow:all(pred)
-    local result = true
-    self._run(function (v)
-        if not pred(v) then result = false end
+local function short_circuit(self, pred, initial, stop_when_match, terminal)
+    local result = initial
+    local stop = {}
+    local ok, err = pcall(function ()
+        self._run(function (v)
+            local matches = not not pred(v)
+            if matches == stop_when_match then
+                result = terminal
+                error(stop, 0)
+            end
+        end)
     end)
+    if not ok and not rawequal(err, stop) then error(err, 0) end
     return result
+end
+
+function Flow:all(pred)
+    return short_circuit(self, pred, true, false, false)
 end
 
 function Flow:any(pred)
-    local result = false
-    self._run(function (v)
-        if pred(v) then result = true end
-    end)
-    return result
+    return short_circuit(self, pred, false, true, true)
 end
 
 function Flow:none(pred)
-    local result = true
-    self._run(function (v)
-        if pred(v) then result = false end
-    end)
-    return result
+    return short_circuit(self, pred, true, true, false)
 end
 
 function Flow:fold(initial, op)
@@ -330,8 +339,33 @@ function Flow:distinct_until_changed(key, are_equal)
     end)
 end
 
+local function buffered(base, capacity, is_default)
+    local result = new_flow(function (emit)
+        async.scope(function (scope)
+            local ch = async.channel(capacity)
+            scope:launch(function ()
+                base._run(function (v) ch:send(v) end)
+                ch:close()
+            end)
+            for v in ch:iter() do emit(v) end
+        end)
+    end)
+    result._buffer_base = base
+    result._buffer_capacity = capacity
+    result._buffer_default = is_default
+    return result
+end
+
 function Flow:flow_on(ctx)
     local up = self
+    if up._buffer_base then
+        local base = new_flow(function (emit)
+            async.with_context(ctx, function ()
+                up._buffer_base._run(emit)
+            end)
+        end)
+        return buffered(base, up._buffer_capacity, up._buffer_default)
+    end
     return new_flow(function (emit)
         async.with_context(ctx, function ()
             up._run(emit)
@@ -339,18 +373,37 @@ function Flow:flow_on(ctx)
     end)
 end
 
-function Flow:buffer(cap)
+function Flow:cancellable()
+    if self._cancellable then return self end
     local up = self
-    return new_flow(function (emit)
-        async.scope(function (scope)
-            local ch = async.channel(cap or 0)
-            scope:launch(function ()
-                up._run(function (v) ch:send(v) end)
-                ch:close()
-            end)
-            for v in ch:iter() do emit(v) end
+    local result = new_flow(function (emit)
+        up._run(function (value)
+            async.ensure_active()
+            emit(value)
         end)
     end)
+    result._cancellable = true
+    return result
+end
+
+function Flow:buffer(cap)
+    local base = self._buffer_base or self
+    local previous_capacity = self._buffer_capacity
+    local previous_default = self._buffer_default
+    local is_default = cap == nil and (previous_capacity == nil or previous_default)
+    local capacity
+    if previous_capacity == nil then
+        capacity = cap == nil and 64 or cap
+    elseif previous_default and cap == nil then
+        capacity = 64
+    elseif previous_default then
+        capacity = cap
+    elseif cap == nil then
+        capacity = previous_capacity
+    else
+        capacity = previous_capacity + cap
+    end
+    return buffered(base, capacity, is_default)
 end
 
 function Flow:catch(handler)

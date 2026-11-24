@@ -174,7 +174,12 @@ function Flow:distinct_until_changed(key, are_equal) end
 ---@return luastd.flow.Flow
 function Flow:flow_on(context) end
 
---- Buffer upstream with a channel of capacity `cap`.
+--- Check the current coroutine's cancellation state before each emission.
+--- Already-cancellable builder flows are returned unchanged.
+---@return luastd.flow.Flow
+function Flow:cancellable() end
+
+--- Buffer upstream with a channel of capacity `cap` (default 64).
 ---@param cap? integer
 ---@return luastd.flow.Flow
 function Flow:buffer(cap) end
