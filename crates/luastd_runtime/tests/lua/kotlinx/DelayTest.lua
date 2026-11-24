@@ -1,8 +1,6 @@
 -- Port of kotlinx.coroutines' DelayTest (see AGENTS.md, "Kotlin test
 -- ports"). A cancelled deferred is observed with `try_await`, which reports
 -- `JobCancelled` as a value.
----@diagnostic disable: await-in-sync
-
 local async = require("luastd.async")
 local runtest = require("luastd_test").runtest
 
