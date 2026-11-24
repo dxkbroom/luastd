@@ -148,6 +148,11 @@ function Flow:drop(n) end
 ---@return luastd.flow.Flow
 function Flow:drop_while(predicate) end
 
+--- Take values while the predicate holds.
+---@param predicate fun(value: any): boolean
+---@return luastd.flow.Flow
+function Flow:take_while(predicate) end
+
 --- Transform with full control over emission.
 ---@param fn fun(emit: fun(value: any), value: any)
 ---@return luastd.flow.Flow
@@ -212,8 +217,9 @@ function Flow:scan(initial, op) end
 
 --- Retry the flow up to `n` times on error.
 ---@param n? integer
+---@param predicate? fun(cause: any): boolean
 ---@return luastd.flow.Flow
-function Flow:retry(n) end
+function Flow:retry(n, predicate) end
 
 --- Group values into chunks of `size`.
 ---@param size integer

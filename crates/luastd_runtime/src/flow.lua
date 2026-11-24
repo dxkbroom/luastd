@@ -274,6 +274,21 @@ function Flow:drop_while(pred)
     end)
 end
 
+function Flow:take_while(pred)
+    local up = self
+    return new_flow(function (emit)
+        local taking = true
+        up._run(function (v)
+            if not taking then return end
+            if pred(v) then
+                emit(v)
+            else
+                taking = false
+            end
+        end)
+    end)
+end
+
 function Flow:transform(fn)
     local up = self
     return new_flow(function (emit)
@@ -401,7 +416,7 @@ function Flow:scan(initial, op)
     end)
 end
 
-function Flow:retry(n)
+function Flow:retry(n, predicate)
     n = n or 1
     local up = self
     return new_flow(function (emit)
