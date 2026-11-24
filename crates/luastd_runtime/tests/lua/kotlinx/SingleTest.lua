@@ -22,7 +22,6 @@ describe("SingleTest", function ()
     -- defer: nil elements are not representable in a Lua table (ipairs stops at nil).
     pending("testNullableSingle")
 
-    -- defer: single with predicate not in initial scope? (supported) but null handling.
     it("testSingleNoWait", function ()
         assert.is_equal(1, flow.from({ 1 }):single())
     end)

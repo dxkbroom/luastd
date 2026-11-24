@@ -5,7 +5,9 @@ local flow = require("luastd.flow")
 
 -- kotlin: kotlinx-coroutines-core/common/test/flow/operators/BufferTest.kt@1.11.0
 describe("BufferTest", function ()
-    it("testBuffer", function ()
+    -- adapted: checks that buffer(2) passes every element; Kotlin also asserts
+    -- the batch timing of the buffer.
+    it("testBuffer2", function ()
         local r = flow.from({ 1, 2, 3 }):buffer(2):to_list()
         assert.is_equal(3, #r)
         assert.is_equal(1, r[1])
@@ -33,7 +35,6 @@ describe("BufferTest", function ()
     pending("testFlowOnNameBufferFused")
     pending("testFlowOnNameNoBuffer")
     pending("testBuffer1")
-    pending("testBuffer2")
     pending("testBuffer3")
     pending("testBuffer00Fused")
     pending("testBuffer01Fused")

@@ -98,6 +98,7 @@ def parse_port(file: Path) -> tuple[list[Port], list[Issue]]:
     issues: list[Issue] = []
     pending_ref: re.Match[str] | None = None
     current: Port | None = None
+    group_mark: tuple[str, str] | None = None
     saw_ref = False
     saw_describe = False
     for index, line in enumerate(lines):
@@ -111,6 +112,7 @@ def parse_port(file: Path) -> tuple[list[Port], list[Issue]]:
             current = Port(describe.group(1), pending_ref.group(1), pending_ref.group(2), file)
             ports.append(current)
             pending_ref = None
+            group_mark = None
             saw_describe = True
             continue
         if current is None:
@@ -123,20 +125,33 @@ def parse_port(file: Path) -> tuple[list[Port], list[Issue]]:
         kind, name = test.groups()
         mark = reason_above(lines, index)
         if kind == "pending":
+            # A status mark above the first of a contiguous run of `pending` lines
+            # covers the whole run, so a group of unported cases shares one reason.
+            previous = TEST.search(lines[index - 1]) if index else None
+            chained = bool(previous and previous.group(1) == "pending")
             if mark and mark[0] in ("not-applicable", "defer", "todo"):
+                group_mark = mark
+                status, reason = mark
+            elif mark:
+                group_mark = None
+                status, reason = "todo", ""
+            elif chained and group_mark:
+                status, reason = group_mark
+            else:
+                group_mark = None
+                status, reason = "todo", ""
+        else:
+            group_mark = None
+            if mark and mark[0] == "adapted":
                 status, reason = mark
             else:
-                status, reason = "todo", ""
-        elif mark and mark[0] == "adapted":
-            status, reason = mark
-        else:
-            status, reason = "ported", ""
-            if mark and mark[0] in ("not-applicable", "defer", "todo"):
-                issues.append(Issue(
-                    "invalid-status-marker",
-                    f"{mark[0]} marker is attached to an active test",
-                    file=str(file), cls=current.cls, test=name,
-                ))
+                status, reason = "ported", ""
+                if mark and mark[0] in ("not-applicable", "defer", "todo"):
+                    issues.append(Issue(
+                        "invalid-status-marker",
+                        f"{mark[0]} marker is attached to an active test",
+                        file=str(file), cls=current.cls, test=name,
+                    ))
         current.tests.append(TestPort(name, status, reason, index + 1))
 
     if not saw_ref:

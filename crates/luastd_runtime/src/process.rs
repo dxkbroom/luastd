@@ -286,7 +286,6 @@ async fn run_command(
     Ok((pid, code, stdout, stderr))
 }
 
-
 fn make_result_table(lua: &Lua, code: i32, stdout: String, stderr: String) -> MluaResult<Value> {
     let table = lua.create_table()?;
     table.set("code", code)?;

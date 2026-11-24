@@ -16,7 +16,9 @@ describe("ToCollectionTest", function ()
         local set = {}
         flow.from({ 1, 2, 2, 3 }):collect(function (v) set[v] = true end)
         local n = 0
-        for _ in pairs(set) do n = n + 1 end
+        for _ in pairs(set) do
+            n = n + 1
+        end
         assert.is_equal(3, n)
     end)
 end)

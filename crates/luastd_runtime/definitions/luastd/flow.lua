@@ -211,12 +211,12 @@ function Flow:transform_while(fn) end
 
 --- Emit running accumulator, starting with `initial`.
 ---@param initial any
----@param op fun(acc: any, value: any): any
+---@param op      fun(acc: any, value: any): any
 ---@return luastd.flow.Flow
 function Flow:scan(initial, op) end
 
 --- Retry the flow up to `n` times on error.
----@param n? integer
+---@param n?         integer
 ---@param predicate? fun(cause: any): boolean
 ---@return luastd.flow.Flow
 function Flow:retry(n, predicate) end
@@ -235,13 +235,13 @@ function Flow:conflate() end
 function Flow:collect_latest(fn) end
 
 --- Pair values from two flows by index.
----@param other luastd.flow.Flow
+---@param other      luastd.flow.Flow
 ---@param transform? fun(a: any, b: any): any
 ---@return luastd.flow.Flow
 function Flow:zip(other, transform) end
 
 --- Combine latest values from two flows.
----@param other luastd.flow.Flow
+---@param other      luastd.flow.Flow
 ---@param transform? fun(a: any, b: any): any
 ---@return luastd.flow.Flow
 function Flow:combine(other, transform) end
@@ -274,9 +274,9 @@ function SharedFlow:try_emit(value) end
 function SharedFlow:as_shared_flow() end
 
 --- Create a mutable shared flow.
----@param replay? integer
+---@param replay?       integer
 ---@param extra_buffer? integer
----@param on_overflow? "SUSPEND"|"DROP_OLDEST"|"DROP_LATEST"
+---@param on_overflow?  "SUSPEND" | "DROP_OLDEST" | "DROP_LATEST"
 ---@return luastd.flow.SharedFlow
 function flow.mutable_shared_flow(replay, extra_buffer, on_overflow) end
 

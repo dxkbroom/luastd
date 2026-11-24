@@ -639,7 +639,7 @@ local Semaphore = {}
 Semaphore.__index = Semaphore
 
 ---@class luastd.async.Mutex
----@field _sem   luastd.async.Semaphore
+---@field _sem     luastd.async.Semaphore
 ---@field _owner   any?
 ---@field _pending any[]
 local Mutex = {}

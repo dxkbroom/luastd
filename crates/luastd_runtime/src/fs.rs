@@ -309,7 +309,6 @@ async fn read_async(
     Ok(Value::String(lua.create_string(&bytes)?))
 }
 
-
 async fn try_read_async(
     lua: &Lua,
     perms: &PermissionsContainer,
@@ -343,7 +342,6 @@ async fn write_async(
         .map_err(|e| fs_error("write", &path, e))?;
     Ok(Value::Nil)
 }
-
 
 async fn try_write_async(
     lua: &Lua,
@@ -391,7 +389,6 @@ async fn list_async(
     }
     Ok(Value::Table(table))
 }
-
 
 async fn try_list_async(
     lua: &Lua,
@@ -487,7 +484,6 @@ async fn stat_async(
     Ok(Value::Table(table))
 }
 
-
 async fn try_stat_async(
     lua: &Lua,
     perms: &PermissionsContainer,
@@ -520,7 +516,6 @@ async fn mkdir_async(
         .map_err(|e| fs_error("mkdir", &path, e))?;
     Ok(Value::Nil)
 }
-
 
 async fn try_mkdir_async(
     lua: &Lua,
@@ -562,7 +557,6 @@ async fn remove_async(
     Ok(Value::Nil)
 }
 
-
 async fn try_remove_async(
     lua: &Lua,
     perms: &PermissionsContainer,
@@ -597,7 +591,6 @@ async fn rename_async(
         .map_err(|e| fs_error("rename", &from, e))?;
     Ok(Value::Nil)
 }
-
 
 async fn try_rename_async(
     lua: &Lua,

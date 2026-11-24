@@ -129,6 +129,9 @@ so each reads next to its Kotlin source:
     current API cannot support the case;
   - `pending(name)` with `-- not-applicable: <why>` when the Kotlin case does
     not apply to luastd (e.g. ADR 0005).
+
+  One mark above the first `pending` of a contiguous run covers the whole run,
+  so a block of cases that defer for the same reason shares one comment.
 - Bind `local runtest = luastd_test.runtest` and call `runtest(function (t) ... end)`
   (mirrors `runTest { }`): `t:expect(n)`, `t:finish(n)`, `t:expect_unreached()`;
   options `expected`, `unhandled` (a luastd.Error kind, or a predicate) and
