@@ -320,9 +320,18 @@ function async.delay(ms) end
 ---@async
 function async.yield() end
 
+--- Suspend until the current coroutine is cancelled, then raise its
+--- uncatchable cancellation error. Use `async.finally` for cleanup.
+---@async
+function async.await_cancellation() end
+
 --- Whether the current coroutine's scope has not been cancelled.
 ---@return boolean
 function async.is_active() end
+
+--- Raise the uncatchable cancellation error if the current coroutine was
+--- cancelled. This check does not suspend or yield.
+function async.ensure_active() end
 
 --- The current scope (the root scope outside any job or scope).
 ---@return luastd.async.Scope

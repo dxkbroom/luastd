@@ -454,8 +454,17 @@ function async.yield()
     if not core.yield() then raise_cancelled() end
 end
 
+function async.await_cancellation()
+    core.await_cancellation()
+    raise_cancelled()
+end
+
 function async.is_active()
     return core.active()
+end
+
+function async.ensure_active()
+    if not core.active() then raise_cancelled() end
 end
 
 function async.current()

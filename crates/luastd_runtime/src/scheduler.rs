@@ -1119,6 +1119,13 @@ fn core(lua: &Lua) -> Result<Table> {
         })?,
     )?;
     core.set(
+        "await_cancellation",
+        lua.create_async_function(|lua, ()| async move {
+            let _ = cancellable(&lua, std::future::pending::<()>()).await;
+            Ok(())
+        })?,
+    )?;
+    core.set(
         "now_ms",
         lua.create_function(|lua, ()| Ok(scheduler(lua)?.epoch.elapsed().as_secs_f64() * 1000.0))?,
     )?;
