@@ -1,5 +1,4 @@
 -- Port of kotlinx.coroutines' BufferTest.
----@diagnostic disable: await-in-sync
 
 local flow = require("luastd.flow")
 local async = require("luastd.async")

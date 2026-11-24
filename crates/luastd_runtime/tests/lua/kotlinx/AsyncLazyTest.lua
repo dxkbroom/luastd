@@ -1,8 +1,7 @@
 -- kotlin: kotlinx-coroutines-core/common/test/AsyncLazyTest.kt@1.11.0
----@diagnostic disable: await-in-sync
 local async = require("luastd.async")
 local luastd_test = require("luastd_test")
-local runtest = luastd_test.runtest
+local runtest = require("luastd_test").runtest
 
 describe("AsyncLazyTest", function ()
     it(

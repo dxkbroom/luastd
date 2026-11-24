@@ -1,5 +1,4 @@
 -- Port of kotlinx.coroutines' BooleanTerminationTest.
----@diagnostic disable: await-in-sync
 
 local flow = require("luastd.flow")
 local runtest = require("luastd_test").runtest
