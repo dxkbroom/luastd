@@ -83,7 +83,7 @@ describe("luastd.flow", function ()
 
         it("combine", function ()
             local r = flow.from({ 1, 2 }):combine(flow.from({ 10, 20 }), function (a, b) return a + b end):to_list()
-            assert.is_equal(2, #r)
+            assert.same({ 11, 12, 22 }, r)
         end)
 
         it("transform_while", function ()

@@ -5,18 +5,21 @@ local luastd_test = require("luastd_test")
 describe("ChannelUndeliveredElementTest", function ()
     -- adapted: luastd has no onUndeliveredElement callback; verify that a
     -- resource sent and received normally remains available to its consumer.
-    it("testSendSuccessfully", luastd_test.runtest(function ()
-        local channel = async.channel(1)
-        local resource = { value = "OK", cancelled = false }
-        local sender = async.launch(function () channel:send(resource) end)
-        local received = channel:receive()
-        assert.is_true(rawequal(resource, received))
-        assert.is_equal("OK", received.value)
-        assert.is_false(received.cancelled)
-        channel:close()
-        async.join(sender)
-        assert.is_false(resource.cancelled)
-    end))
+    it(
+        "testSendSuccessfully",
+        luastd_test.runtest(function ()
+            local channel = async.channel(1)
+            local resource = { value = "OK", cancelled = false }
+            local sender = async.launch(function () channel:send(resource) end)
+            local received = channel:receive()
+            assert.is_true(rawequal(resource, received))
+            assert.is_equal("OK", received.value)
+            assert.is_false(received.cancelled)
+            channel:close()
+            async.join(sender)
+            assert.is_false(resource.cancelled)
+        end)
+    )
 
     -- not-applicable: there is no callback API to report a rendezvous send
     -- value cancelled while waiting.
@@ -40,17 +43,20 @@ describe("ChannelUndeliveredElementTest", function ()
 
     -- adapted: with no undelivered-element callback API, verify that a
     -- waiting receiver gets the value exactly once and the channel leaves it.
-    it("testHandlerIsNotInvoked", luastd_test.runtest(function (t)
-        local channel = async.channel()
-        local receiver = async.launch(function ()
-            t:expect(2)
-            assert.is_equal("value", channel:receive())
+    it(
+        "testHandlerIsNotInvoked",
+        luastd_test.runtest(function (t)
+            local channel = async.channel()
+            local receiver = async.launch(function ()
+                t:expect(2)
+                assert.is_equal("value", channel:receive())
+            end)
+            t:expect(1)
+            channel:send("value")
+            async.join(receiver)
+            t:finish(3)
         end)
-        t:expect(1)
-        channel:send("value")
-        async.join(receiver)
-        t:finish(3)
-    end))
+    )
 
     -- not-applicable: overflow strategies drop values, but there is no
     -- callback hook to observe which values were discarded.

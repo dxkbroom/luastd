@@ -565,19 +565,47 @@ end
 function Flow:combine(other, transform)
     local up = self
     return new_flow(function (emit)
-        local b_vals = {}
-        other._run(function (v) table.insert(b_vals, v) end)
-        local bi = 1
-        up._run(function (a)
-            local b = b_vals[bi] or b_vals[#b_vals]
-            if b ~= nil or #b_vals > 0 then
-                if transform then
-                    emit(transform(a, b))
+        local absent = {}
+        local nil_value = {}
+        async.scope(function (scope)
+            local events = async.channel(async.RENDEZVOUS)
+            local remaining = 2
+            local latest = { absent, absent }
+            local jobs = {}
+            local function launch_source(source, index)
+                jobs[index] = scope:launch(function ()
+                    source._run(function (value)
+                        events:send({ index = index, value = value == nil and nil_value or value })
+                        async.yield()
+                    end)
+                    events:send({ index = index, done = true })
+                    remaining = remaining - 1
+                    if remaining == 0 then events:close() end
+                end)
+            end
+            launch_source(up, 1)
+            launch_source(other, 2)
+            for event in events:iter() do
+                if event.done then
+                    if latest[event.index] == absent then
+                        local other_job = jobs[3 - event.index]
+                        if other_job then other_job:cancel() end
+                        break
+                    end
                 else
-                    emit({ a, b })
+                    latest[event.index] = event.value
+                    if latest[1] ~= absent and latest[2] ~= absent then
+                        local a, b = latest[1], latest[2]
+                        if a == nil_value then a = nil end
+                        if b == nil_value then b = nil end
+                        if transform then
+                            emit(transform(a, b))
+                        else
+                            emit({ a, b })
+                        end
+                    end
                 end
             end
-            bi = bi + 1
         end)
     end)
 end
