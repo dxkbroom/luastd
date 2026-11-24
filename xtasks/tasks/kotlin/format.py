@@ -29,6 +29,9 @@ KOTLINX = Path(os.environ.get("KOTLINX_DIR") or ROOT.parent / "kotlinx.coroutine
 def main(argv: list[str]) -> int:
     files = [Path(arg) for arg in argv]
     if not files:
+        env_files = os.environ.get("usage_files", "").split()
+        files = [Path(file) for file in env_files]
+    if not files:
         files = sorted(PORTS.glob("*.lua"))
     inventory, _ = kotlin_test_sources(KOTLINX, KOTLIN_TEST_TAG)
     abstract_methods = inherited_test_methods(inventory)
