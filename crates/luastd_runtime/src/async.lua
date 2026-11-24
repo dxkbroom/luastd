@@ -199,10 +199,9 @@ function Scope:async(body)
 end
 
 function Job:cancel()
-    local ch = completable_channels[self._handle]
-    if ch then
-        local status = core.send(ch._channel, { cancelled = true })
-        if status == "ok" then return true end
+    if completable_channels[self._handle] then
+        core.cancel(self._handle)
+        return true
     end
     core.cancel(self._handle)
 end
