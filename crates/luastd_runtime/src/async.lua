@@ -480,6 +480,10 @@ end
 
 -- Channels.
 
+async.RENDEZVOUS = 0
+async.UNLIMITED = -1
+async.CONFLATED = -2
+
 --- The implementation behind the `luastd.async.Channel` stub.
 ---@class luastd.async.ChannelImpl
 ---@field _channel  any  core channel userdata
@@ -487,17 +491,31 @@ end
 local Channel = {}
 Channel.__index = Channel
 
-function async.channel(cap)
+function async.channel(cap, overflow)
     if cap == nil then cap = 0 end
-    if type(cap) ~= "number" or cap < 0 or cap % 1 ~= 0 then
+    if type(cap) ~= "number" or (cap < -2 or cap % 1 ~= 0) then
         error(
             new_error(
                 "InvalidArgument",
-                ("bad argument #1 to 'channel' (non-negative integer expected, got %s)"):format(tostring(cap))
+                ("bad argument #1 to 'channel' (non-negative integer or channel constant expected, got %s)"):format(
+                    tostring(cap)
+                )
             ), 2
         )
     end
-    return setmetatable({ _channel = core.channel(cap) }, Channel)
+    if cap == -1 then cap = 2147483647 end
+    if cap == -2 then
+        if overflow ~= nil then
+            error(new_error("InvalidArgument", "conflated channels do not accept an overflow mode"), 2)
+        end
+        cap = 1
+        overflow = "conflated"
+    end
+    if overflow == nil then overflow = "suspend" end
+    if overflow ~= "suspend" and overflow ~= "drop_oldest" and overflow ~= "drop_latest" and overflow ~= "conflated" then
+        error(new_error("InvalidArgument", ("invalid channel overflow mode %s"):format(tostring(overflow))), 2)
+    end
+    return setmetatable({ _channel = core.channel(cap, overflow) }, Channel)
 end
 
 function Channel:send(value)
@@ -512,19 +530,50 @@ function Channel:send(value)
         raise_cancelled()
     end
     if status == "closed" then
+        local reason = core.close_reason(self._channel)
+        if reason ~= nil then error(reason, 0) end
         error(new_error("ChannelClosed", "send on a closed channel"), 2)
     end
 end
 
+--- Try to send without waiting.
+---@param value any
+---@return boolean, luastd.Error?
+function Channel:try_send(value)
+    if value == nil then
+        error(new_error("InvalidArgument", "bad argument #1 to 'try_send' (cannot send nil)"), 2)
+    end
+    local status = core.try_send(self._channel, value)
+    if status == "ok" then return true end
+    if status == "full" then
+        return false, new_error("ChannelFull", "channel is full")
+    end
+    local reason = core.close_reason(self._channel)
+    if reason ~= nil then return false, reason end
+    return false, new_error("ChannelClosed", "send on a closed channel")
+end
+
+--- Try to receive without waiting.
+---@return boolean, any, luastd.Error?
+function Channel:try_receive()
+    local status, value, reason = core.try_receive(self._channel)
+    if status == "value" then return true, value end
+    if status == "cancelled" then raise_cancelled() end
+    if status == "empty" then return false, nil, new_error("ChannelEmpty", "channel is empty") end
+    if reason ~= nil then return false, nil, reason end
+    return false, nil, new_error("ChannelClosed", "receive on a closed, empty channel")
+end
+
 function Channel:receive()
-    local status, value = core.receive(self._channel)
+    local status, value, reason = core.receive(self._channel)
     if status == "value" then return value end
     if status == "cancelled" then raise_cancelled() end
+    if reason ~= nil then error(reason, 0) end
     error(new_error("ChannelClosed", "receive on a closed, empty channel"), 2)
 end
 
-function Channel:close()
-    core.close(self._channel)
+function Channel:close(cause)
+    core.close(self._channel, cause)
 end
 
 function Channel:cancel()
@@ -537,9 +586,12 @@ function Channel:each(fn)
     local channel = self._channel
     async.finally(function ()
         while true do
-            local status, value = core.receive(channel)
+            local status, value, reason = core.receive(channel)
             if status == "cancelled" then raise_cancelled() end
-            if status ~= "value" then return end
+            if status ~= "value" then
+                if reason ~= nil then error(reason, 0) end
+                return
+            end
             if fn(value) == false then return end
         end
     end, function () self:cancel() end)
@@ -549,12 +601,21 @@ function Channel:is_closed()
     return core.is_closed(self._channel)
 end
 
+function Channel:is_closed_for_receive()
+    return core.is_closed_for_receive(self._channel)
+end
+
+function Channel:is_empty()
+    return core.is_empty(self._channel)
+end
+
 function Channel:iter()
     local channel = self._channel
     return function ()
-        local status, value = core.receive(channel)
+        local status, value, reason = core.receive(channel)
         if status == "value" then return value end
         if status == "cancelled" then raise_cancelled() end
+        if reason ~= nil then error(reason, 0) end
         return nil
     end
 end
@@ -578,7 +639,12 @@ function Channel:debounce(ms)
                         raise_cancelled()
                     else
                         out:send(value)
-                        if next_status == "closed" then return end
+                        if next_status == "closed" then
+                            ---@type any
+                            local reason = core.close_reason(source)
+                            if reason ~= nil then out:close(reason) end
+                            return
+                        end
                         break
                     end
                 end

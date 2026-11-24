@@ -577,10 +577,14 @@ fn kind(name: &str) -> Result<Kind> {
 /// Channel state: a bounded queue; `cap == 0` is a rendezvous.
 struct ChannelState {
     cap: usize,
+    overflow: &'static str,
     queue: RefCell<VecDeque<(u64, Value)>>,
     next_seq: Cell<u64>,
     taken: Cell<u64>,
+    waiting_receivers: Cell<usize>,
     closed: Cell<bool>,
+    /// The error `close` was called with, if any.
+    closed_reason: RefCell<Option<Value>>,
     /// `cancel()`d: closed, buffer dropped, senders are cancelled.
     cancelled: Cell<bool>,
     changed: Notify,
@@ -590,6 +594,16 @@ struct ChannelState {
 pub(crate) struct Channel(Rc<ChannelState>);
 
 impl UserData for Channel {}
+
+struct WaitingReceiver(Rc<ChannelState>);
+
+impl Drop for WaitingReceiver {
+    fn drop(&mut self) {
+        self.0
+            .waiting_receivers
+            .set(self.0.waiting_receivers.get() - 1);
+    }
+}
 
 /// Semaphore state: a counting permit pool backed by tokio's fair semaphore.
 #[derive(Clone)]
@@ -636,16 +650,71 @@ impl Semaphore {
 impl UserData for Semaphore {}
 
 impl Channel {
-    fn new(cap: usize) -> Self {
+    fn new(cap: usize, overflow: &'static str) -> Self {
         Self(Rc::new(ChannelState {
             cap,
+            overflow,
             queue: RefCell::default(),
             next_seq: Cell::new(0),
             taken: Cell::new(0),
+            waiting_receivers: Cell::new(0),
             closed: Cell::new(false),
+            closed_reason: RefCell::default(),
             cancelled: Cell::new(false),
             changed: Notify::new(),
         }))
+    }
+
+    /// `"ok"`, `"full"` or `"closed"`; never waits for room.
+    fn try_send(&self, value: Value) -> &'static str {
+        let state = &self.0;
+        if state.cancelled.get() || state.closed.get() {
+            return "closed";
+        }
+        if state.cap == 0 && state.overflow == "suspend" && state.waiting_receivers.get() == 0 {
+            return "full";
+        }
+        let len = state.queue.borrow().len();
+        if len < state.cap.max(1) {
+            let seq = state.next_seq.get();
+            state.next_seq.set(seq + 1);
+            state.queue.borrow_mut().push_back((seq, value));
+            state.changed.notify_waiters();
+            "ok"
+        } else if state.overflow == "drop_latest" {
+            let seq = state.next_seq.get();
+            state.next_seq.set(seq + 1);
+            state.queue.borrow_mut().push_back((seq, value));
+            state.queue.borrow_mut().pop_back();
+            state.changed.notify_waiters();
+            "ok"
+        } else if matches!(state.overflow, "conflated" | "drop_oldest") {
+            let seq = state.next_seq.get();
+            state.next_seq.set(seq + 1);
+            state.queue.borrow_mut().push_back((seq, value));
+            state.queue.borrow_mut().pop_front();
+            state.changed.notify_waiters();
+            "ok"
+        } else {
+            "full"
+        }
+    }
+
+    fn try_receive(&self) -> (&'static str, Value) {
+        let state = &self.0;
+        if state.cancelled.get() {
+            return ("cancelled", Value::Nil);
+        }
+        if let Some((seq, value)) = state.queue.borrow_mut().pop_front() {
+            state.taken.set(state.taken.get().max(seq + 1));
+            state.changed.notify_waiters();
+            return ("value", value);
+        }
+        if state.closed.get() {
+            ("closed", Value::Nil)
+        } else {
+            ("empty", Value::Nil)
+        }
     }
 
     /// `"ok"`, `"closed"`, `"cancelled"` (the caller was) or
@@ -661,10 +730,27 @@ impl Channel {
                 if state.closed.get() {
                     return None;
                 }
-                if state.queue.borrow().len() < state.cap.max(1) {
+                let len = state.queue.borrow().len();
+                if len < state.cap.max(1) {
                     let seq = state.next_seq.get();
                     state.next_seq.set(seq + 1);
                     state.queue.borrow_mut().push_back((seq, value));
+                    state.changed.notify_waiters();
+                    return Some(Some(seq));
+                }
+                if state.overflow == "drop_latest" {
+                    let seq = state.next_seq.get();
+                    state.next_seq.set(seq + 1);
+                    state.queue.borrow_mut().push_back((seq, value));
+                    state.queue.borrow_mut().pop_back();
+                    state.changed.notify_waiters();
+                    return Some(Some(seq));
+                }
+                if matches!(state.overflow, "conflated" | "drop_oldest") {
+                    let seq = state.next_seq.get();
+                    state.next_seq.set(seq + 1);
+                    state.queue.borrow_mut().push_back((seq, value));
+                    state.queue.borrow_mut().pop_front();
                     state.changed.notify_waiters();
                     return Some(Some(seq));
                 }
@@ -678,6 +764,9 @@ impl Channel {
             Some(Some(Some(seq))) => seq,
         };
         if state.cap > 0 {
+            return "ok";
+        }
+        if state.overflow != "suspend" {
             return "ok";
         }
         // Rendezvous: wait until a receiver took this value.
@@ -719,7 +808,12 @@ impl Channel {
                 if state.closed.get() {
                     return None;
                 }
+                state
+                    .waiting_receivers
+                    .set(state.waiting_receivers.get() + 1);
+                let waiting_receiver = WaitingReceiver(state.clone());
                 notified.await;
+                drop(waiting_receiver);
             }
         };
         let raced = async {
@@ -736,7 +830,13 @@ impl Channel {
         }
     }
 
-    fn close(&self) {
+    fn close(&self, reason: Option<Value>) {
+        if self.0.closed.get() {
+            return;
+        }
+        if let Some(reason) = reason {
+            *self.0.closed_reason.borrow_mut() = Some(reason);
+        }
         self.0.closed.set(true);
         self.0.changed.notify_waiters();
     }
@@ -1025,7 +1125,15 @@ fn core(lua: &Lua) -> Result<Table> {
 
     core.set(
         "channel",
-        lua.create_function(|_, cap: usize| Ok(Channel::new(cap)))?,
+        lua.create_function(|_, (cap, overflow): (usize, String)| {
+            let overflow: &'static str = match overflow.as_str() {
+                "drop_oldest" => "drop_oldest",
+                "drop_latest" => "drop_latest",
+                "conflated" => "conflated",
+                _ => "suspend",
+            };
+            Ok(Channel::new(cap, overflow))
+        })?,
     )?;
     core.set(
         "send",
@@ -1035,22 +1143,56 @@ fn core(lua: &Lua) -> Result<Table> {
         })?,
     )?;
     core.set(
+        "try_send",
+        lua.create_function(
+            |_, (ch, value): (UserDataRef<Channel>, Value)| Ok(ch.try_send(value)),
+        )?,
+    )?;
+    core.set(
+        "try_receive",
+        lua.create_function(|lua, ch: UserDataRef<Channel>| {
+            let (status, value) = ch.try_receive();
+            let reason = if status == "closed" {
+                ch.0.closed_reason.borrow().clone().unwrap_or(Value::Nil)
+            } else {
+                Value::Nil
+            };
+            Ok(MultiValue::from_vec(vec![
+                Value::String(lua.create_string(status)?),
+                value,
+                reason,
+            ]))
+        })?,
+    )?;
+    core.set(
+        "close_reason",
+        lua.create_function(|_, ch: UserDataRef<Channel>| {
+            Ok(ch.0.closed_reason.borrow().clone().unwrap_or(Value::Nil))
+        })?,
+    )?;
+    core.set(
         "receive",
         lua.create_async_function(|lua, (ch, timeout): (UserDataRef<Channel>, Option<f64>)| {
             let ch = ch.clone();
             async move {
                 let (status, value) = ch.receive(&lua, timeout.map(duration)).await;
+                let reason = if status == "closed" {
+                    ch.0.closed_reason.borrow().clone().unwrap_or(Value::Nil)
+                } else {
+                    Value::Nil
+                };
                 Ok(MultiValue::from_vec(vec![
                     Value::String(lua.create_string(status)?),
                     value,
+                    reason,
                 ]))
             }
         })?,
     )?;
     core.set(
         "close",
-        lua.create_function(|_, ch: UserDataRef<Channel>| {
-            ch.close();
+        lua.create_function(|_, (ch, reason): (UserDataRef<Channel>, Option<Value>)| {
+            ch.close(reason);
             Ok(())
         })?,
     )?;
@@ -1064,6 +1206,18 @@ fn core(lua: &Lua) -> Result<Table> {
     core.set(
         "is_closed",
         lua.create_function(|_, ch: UserDataRef<Channel>| Ok(ch.0.closed.get()))?,
+    )?;
+    core.set(
+        "is_closed_for_receive",
+        lua.create_function(|_, ch: UserDataRef<Channel>| {
+            Ok(ch.0.closed.get() && ch.0.queue.borrow().is_empty())
+        })?,
+    )?;
+    core.set(
+        "is_empty",
+        lua.create_function(|_, ch: UserDataRef<Channel>| {
+            Ok(!ch.0.closed.get() && ch.0.queue.borrow().is_empty())
+        })?,
     )?;
     core.set(
         "semaphore",

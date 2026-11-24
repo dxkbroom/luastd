@@ -2,6 +2,7 @@
 local async = require("luastd.async")
 local luastd_test = require("luastd_test")
 local runtest = luastd_test.runtest
+---@diagnostic disable: await-in-sync
 
 describe("ChannelBufferOverflowTest", function ()
     -- adapted: try_receive returns a boolean/value/error tuple instead of a

@@ -351,15 +351,26 @@ function async.finally(body, cleanup) end
 --- local lines = async.channel(16)
 --- ```
 ---
+---@type 0
+async.RENDEZVOUS = 0
+
+---@type - 1
+async.UNLIMITED = -1
+
+---@type - 2
+async.CONFLATED = -2
+
 --- Element types are not checked at runtime.
 ---@class luastd.async.Channel<T = any>
 local Channel = {}
 
 --- A channel with room for `cap` values (default 0: each `send` waits for a
---- `receive`).
----@param cap? integer
+--- `receive`). `async.UNLIMITED` provides no practical capacity limit;
+--- `async.CONFLATED` keeps only the latest value.
+---@param cap?      integer
+---@param overflow? "suspend" | "drop_oldest" | "drop_latest"
 ---@return luastd.async.Channel
-function async.channel(cap) end
+function async.channel(cap, overflow) end
 
 --- Send a non-nil value, waiting for room. On a cancelled channel the sending
 --- coroutine is cancelled quietly: its scope sees no error.
@@ -367,14 +378,30 @@ function async.channel(cap) end
 ---@param value T
 function Channel:send(value) end
 
+--- Try to send without waiting: `true`, or `false` and a `ChannelFull` or
+--- `ChannelClosed` error (the `close` cause, when there is one).
+---@param value T
+---@return_overload true, nil
+---@return_overload false, luastd.Error
+function Channel:try_send(value) end
+
+--- Try to receive without waiting: `true` and the value, or `false` and a
+--- `ChannelEmpty` or `ChannelClosed` error (the `close` cause, when present).
+---@return_overload true, T
+---@return_overload false, nil, luastd.Error
+function Channel:try_receive() end
+
 --- Receive the next value, waiting for one. Values sent before `close` are
---- still delivered.
+--- still delivered; a channel closed with a cause raises it once drained.
 ---@async
 ---@return T
 function Channel:receive() end
 
---- Close the channel; waiting receivers see the end of the stream.
-function Channel:close() end
+--- Close the channel; waiting receivers see the end of the stream. `cause`
+--- becomes the error that receivers and senders raise instead of
+--- `ChannelClosed`.
+---@param cause? luastd.Error
+function Channel:close(cause) end
 
 --- Close the channel, drop buffered values, and cancel pending and future
 --- senders, including the producer job of a `produce` channel. Call it when a
@@ -384,6 +411,14 @@ function Channel:cancel() end
 --- Whether `close` or `cancel` has been called.
 ---@return boolean
 function Channel:is_closed() end
+
+--- Whether the channel is closed and has no buffered values left to receive.
+---@return boolean
+function Channel:is_closed_for_receive() end
+
+--- Whether the channel is open and has no buffered values available for receive.
+---@return boolean
+function Channel:is_empty() end
 
 --- Iterate values until the channel is closed and drained.
 ---

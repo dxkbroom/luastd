@@ -1,6 +1,6 @@
 -- Port of kotlinx.coroutines' ChannelsTest.
 -- luastd has no `asReceiveChannel`, `toList` or `consumeTo` helpers, and
--- `close` takes no cause; `produce` and `each` stand in for them.
+-- `produce` and `each` stand in for them.
 ---@diagnostic disable: await-in-sync
 
 local async = require("luastd.async")
@@ -118,8 +118,24 @@ describe("ChannelsTest", function ()
         end)
     )
 
-    -- defer: `close` takes no cause, so a failed channel cannot be built.
-    pending("testToListOnFailedChannel")
+    it(
+        "testToListOnFailedChannel",
+        runtest(function ()
+            local channel = async.channel(2)
+            channel:send(1)
+            local cause = luastd_test.TestException("boom")
+            channel:close(cause)
+            local result = {}
+            local ok, err = pcall(function ()
+                for x in channel:iter() do
+                    result[#result + 1] = x
+                end
+            end)
+            assert.is_false(ok)
+            assert.is_true(cause == err)
+            assert.are.same({ 1 }, result)
+        end)
+    )
 
     it(
         "testEmptyConsumeToWithDestination",
@@ -145,6 +161,20 @@ describe("ChannelsTest", function ()
         end)
     )
 
-    -- defer: no `try_send`, and `close` takes no cause to fail the channel.
-    pending("testConsumeToWithDestinationOnFailedChannel")
+    it(
+        "testConsumeToWithDestinationOnFailedChannel",
+        runtest(function ()
+            local destination = { -1 }
+            local channel = async.channel(1)
+            channel:send(1)
+            local cause = luastd_test.TestException("boom")
+            channel:close(cause)
+            local ok, err = pcall(function ()
+                channel:each(function (x) destination[#destination + 1] = x end)
+            end)
+            assert.is_false(ok)
+            assert.is_true(cause == err)
+            assert.are.same({ -1, 1 }, destination)
+        end)
+    )
 end)

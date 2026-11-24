@@ -1,6 +1,6 @@
 -- Port of kotlinx.coroutines' BasicOperationsTest.
--- luastd channels have send/receive/close/cancel/iter/each; there is no
--- try_send, receive_catching, invoke_on_close or an iterator protocol.
+-- luastd channels have send/receive/try_send/close/cancel/iter/each;
+-- receive_catching, invoke_on_close and an iterator protocol are not available.
 ---@diagnostic disable: await-in-sync
 
 local async = require("luastd.async")
@@ -32,9 +32,27 @@ describe("BasicOperationsTest", function ()
         end)
     )
 
-    -- defer: no `try_send`.
-    pending("testTrySendToFullChannel")
-    pending("testTrySendAfterClose")
+    it(
+        "testTrySendToFullChannel",
+        runtest(function ()
+            local channel = async.channel(1)
+            assert.is_true(channel:try_send(1))
+            local ok, err = channel:try_send(2)
+            assert.is_false(ok)
+            assert.is_equal("ChannelFull", err.kind)
+        end)
+    )
+
+    it(
+        "testTrySendAfterClose",
+        runtest(function ()
+            local channel = async.channel()
+            channel:close()
+            local ok, err = channel:try_send(1)
+            assert.is_false(ok)
+            assert.is_equal("ChannelClosed", err.kind)
+        end)
+    )
 
     it(
         "testSendAfterClose",
