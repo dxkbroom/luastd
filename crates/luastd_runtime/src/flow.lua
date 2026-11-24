@@ -108,7 +108,10 @@ end
 function Flow:last()
     local result = nil
     local found = false
-    self._run(function (v) result = v; found = true end)
+    self._run(function (v)
+            result = v
+            found = true
+        end)
     if not found then error("NoSuchElementException") end
     return result
 end
@@ -166,8 +169,12 @@ function Flow:reduce(op)
     local acc = nil
     local first = true
     self._run(function (v)
-        if first then acc = v; first = false
-        else acc = op(acc, v) end
+        if first then
+            acc = v
+            first = false
+        else
+            acc = op(acc, v)
+        end
     end)
     if first then error("reduce on empty flow") end
     return acc
@@ -262,8 +269,11 @@ function Flow:drop(n)
     return new_flow(function (emit)
         local count = 0
         up._run(function (v)
-            if count < n then count = count + 1
-            else emit(v) end
+            if count < n then
+                count = count + 1
+            else
+                emit(v)
+            end
         end)
     end)
 end
@@ -329,10 +339,13 @@ function Flow:distinct_until_changed(key, are_equal)
         up._run(function (v)
             local k = key(v)
             if not has then
-                has = true; prev = k; emit(v)
+                has = true
+                prev = k
+                emit(v)
             else
                 if not are_equal(prev, k) then
-                    prev = k; emit(v)
+                    prev = k
+                    emit(v)
                 end
             end
         end)
@@ -347,7 +360,9 @@ local function buffered(base, capacity, is_default)
                 base._run(function (v) ch:send(v) end)
                 ch:close()
             end)
-            for v in ch:iter() do emit(v) end
+            for v in ch:iter() do
+                emit(v)
+            end
         end)
     end)
     result._buffer_base = base
@@ -409,7 +424,26 @@ end
 function Flow:catch(handler)
     local up = self
     return new_flow(function (emit)
-        local ok, err = pcall(function () up._run(emit) end)
+        local downstream_failure = {}
+        local downstream_error
+        local downstream_failed = false
+        local ok, err = pcall(function ()
+            up._run(function (value)
+                local emit_ok, emit_err = pcall(function () emit(value) end)
+                if not emit_ok then
+                    downstream_failed = true
+                    downstream_error = emit_err
+                    error(downstream_failure, 0)
+                end
+            end)
+        end)
+        if not ok and rawequal(err, downstream_failure) then
+            error(downstream_error, 0)
+        end
+        if downstream_failed then
+            if not ok then error(err, 0) end
+            error(downstream_error, 0)
+        end
         if not ok then
             if rawequal(err, BREAK) then error(err) end
             handler(emit, err)
@@ -493,7 +527,8 @@ function Flow:chunked(size)
         up._run(function (v)
             table.insert(chunk, v)
             if #chunk >= size then
-                emit(chunk); chunk = {}
+                emit(chunk)
+                chunk = {}
             end
         end)
         if #chunk > 0 then emit(chunk) end
@@ -536,8 +571,11 @@ function Flow:combine(other, transform)
         up._run(function (a)
             local b = b_vals[bi] or b_vals[#b_vals]
             if b ~= nil or #b_vals > 0 then
-                if transform then emit(transform(a, b))
-                else emit({ a, b }) end
+                if transform then
+                    emit(transform(a, b))
+                else
+                    emit({ a, b })
+                end
             end
             bi = bi + 1
         end)
@@ -557,7 +595,9 @@ function flow.merge(flows)
                     if remaining <= 0 then ch:close() end
                 end)
             end
-            for v in ch:iter() do emit(v) end
+            for v in ch:iter() do
+                emit(v)
+            end
         end)
     end)
 end
@@ -578,7 +618,9 @@ function Flow:flat_map_merge(fn)
                 end)
                 ch:close()
             end)
-            for v in ch:iter() do emit(v) end
+            for v in ch:iter() do
+                emit(v)
+            end
         end)
     end)
 end
@@ -593,11 +635,16 @@ local function make_shared_flow(sf)
         end
         table.insert(sf._subscribers, ch)
         local ok, err = pcall(function ()
-            for v in ch:iter() do emit(v) end
+            for v in ch:iter() do
+                emit(v)
+            end
         end)
         -- unregister
         for i, c in ipairs(sf._subscribers) do
-            if c == ch then table.remove(sf._subscribers, i); break end
+            if c == ch then
+                table.remove(sf._subscribers, i)
+                break
+            end
         end
         if not ok and not rawequal(err, BREAK) then
             error(err, 0)
@@ -613,7 +660,7 @@ function flow.mutable_shared_flow(replay, extra, on_overflow)
         _extra = extra,
         _on_overflow = on_overflow or "SUSPEND",
         _replay_buffer = {},
-        _subscribers = {},
+        _subscribers = {}
     }
     function sf:emit(value)
         table.insert(self._replay_buffer, value)
