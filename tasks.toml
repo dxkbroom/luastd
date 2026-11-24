@@ -21,7 +21,7 @@ description = "Build the project"
 [fmt]
 description = "Format TOML, Markdown, Rust and Lua files"
 alias = ["format"]
-run = ["cargo fmt --all --", "rumdl fmt", "tombi format", "luafmt --write --recursive spec/ crates/luastd/definitions crates/luastd_runtime/definitions crates/luastd_runtime/tests/lua crates/luastd_runtime/src/async.lua"]
+run = ["cargo fmt --all --", "rumdl fmt", "tombi format", "uv run --project xtasks ruff format xtasks/", "luafmt --write --recursive spec/ crates/luastd/definitions crates/luastd_runtime/definitions crates/luastd_runtime/tests/lua crates/luastd_runtime/src/async.lua"]
 
 [lint]
 description = "Lint TOML, Markdown, Rust and Lua files"
@@ -31,7 +31,7 @@ arg "<TARGET>" default="luajit52" {
   choices "luajit52" "luajit" "lua52" "lua53" "lua54" "lua55"
 }
 """
-run = ["rumdl check", "tombi check", "cargo clippy --workspace --all-targets --features=luastd_lua/$usage_target,luastd_runtime/env -- -D warnings", "emmylua_check --config .emmyrc.json spec/ crates/luastd/definitions/ crates/luastd_runtime/definitions/ crates/luastd_runtime/tests/lua/ crates/luastd_runtime/src/async.lua --warnings-as-errors"]
+run = ["rumdl check", "tombi check", "uv run --project xtasks ruff check xtasks/", "cargo clippy --workspace --all-targets --features=luastd_lua/$usage_target,luastd_runtime/env -- -D warnings", "emmylua_check --config .emmyrc.json spec/ crates/luastd/definitions/ crates/luastd_runtime/definitions/ crates/luastd_runtime/tests/lua/ crates/luastd_runtime/src/async.lua --warnings-as-errors"]
 
 [example]
 description = "Run the luastd_runtime hello example (vendored LuaJIT 5.2-compat)"

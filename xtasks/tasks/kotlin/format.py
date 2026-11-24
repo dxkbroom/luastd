@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --project xtasks python
-#MISE description="Reorder Lua Kotlin test ports to match Kotlin source order"
-#USAGE arg "[FILES]..." help="Port files (default: crates/luastd_runtime/tests/lua/kotlinx/*.lua)"
+# MISE description="Reorder Lua Kotlin test ports to match Kotlin source order"
+# USAGE arg "[FILES]..." help="Port files (default: crates/luastd_runtime/tests/lua/kotlinx/*.lua)"
 """Reorder test blocks in Lua ports to match their referenced Kotlin source."""
 
 from __future__ import annotations
@@ -12,8 +12,15 @@ from pathlib import Path
 ROOT = Path(os.environ.get("MISE_PROJECT_ROOT") or Path(__file__).resolve().parents[3])
 sys.path.insert(0, str(ROOT / "xtasks/lib"))
 
-from kotlin_coverage import KOTLIN_TEST_TAG, kotlin_class_test_methods, parse_port, reorder_lua_tests
-from kotlin_coverage import inherited_test_methods, kotlin_source, kotlin_test_sources
+from kotlin_coverage import (
+    KOTLIN_TEST_TAG,
+    inherited_test_methods,
+    kotlin_class_test_methods,
+    kotlin_source,
+    kotlin_test_sources,
+    parse_port,
+    reorder_lua_tests,
+)
 
 PORTS = ROOT / "crates/luastd_runtime/tests/lua/kotlinx"
 KOTLINX = Path(os.environ.get("KOTLINX_DIR") or ROOT.parent / "kotlinx.coroutines")
@@ -29,21 +36,29 @@ def main(argv: list[str]) -> int:
     for file in files:
         ports, issues = parse_port(file)
         if issues:
-            print(f"skip {file}: " + "; ".join(issue.message for issue in issues), file=sys.stderr)
+            print(
+                f"skip {file}: " + "; ".join(issue.message for issue in issues),
+                file=sys.stderr,
+            )
             failed = True
             continue
         updated = file.read_text()
         for port in ports:
             source = kotlin_source(port.path, port.tag, KOTLINX)
             if source is None:
-                print(f"skip {file}: cannot read {port.path}@{port.tag}", file=sys.stderr)
+                print(
+                    f"skip {file}: cannot read {port.path}@{port.tag}", file=sys.stderr
+                )
                 failed = True
                 updated = ""
                 break
             expected = kotlin_class_test_methods(source, port.cls, abstract_methods)
             mapped = {test.name for test in port.tests}
             if set(expected) != mapped:
-                print(f"skip {file}: Kotlin and Lua test names differ for {port.cls}", file=sys.stderr)
+                print(
+                    f"skip {file}: Kotlin and Lua test names differ for {port.cls}",
+                    file=sys.stderr,
+                )
                 failed = True
                 updated = ""
                 break

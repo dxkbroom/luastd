@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --project xtasks python
-#MISE description="Generate pending Lua spec ports for unported Kotlin test classes"
-#USAGE flag "--dry-run" help="List stubs that would be generated without writing files"
+# MISE description="Generate pending Lua spec ports for unported Kotlin test classes"
+# USAGE flag "--dry-run" help="List stubs that would be generated without writing files"
 """Generate a pending Lua spec and register it for each unported Kotlin test class."""
 
 from __future__ import annotations
@@ -27,16 +27,31 @@ def register_classes(source: str, classes: set[str]) -> str:
     match = MACRO.search(source)
     if match is None:
         raise ValueError(f"could not find kotlinx! registry in {TESTS_RS}")
-    current = set(re.findall(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*,\s*$", match.group(2), re.M))
+    current = set(
+        re.findall(
+            r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*,\s*$", match.group(2), re.MULTILINE
+        )
+    )
     names = sorted(current | classes)
     body = "".join(f"    {name},\n" for name in names).rstrip("\n")
-    return source[:match.start()] + match.group(1) + body + match.group(3) + source[match.end():]
+    return (
+        source[: match.start()]
+        + match.group(1)
+        + body
+        + match.group(3)
+        + source[match.end() :]
+    )
 
 
 def main() -> int:
-    report = build_report(sorted(PORTS.glob("*.lua")), ROOT, KOTLINX, inventory_tag=KOTLIN_TEST_TAG)
+    report = build_report(
+        sorted(PORTS.glob("*.lua")), ROOT, KOTLINX, inventory_tag=KOTLIN_TEST_TAG
+    )
     if report["issues"]:
-        print(f"Kotlin inventory has {len(report['issues'])} issue(s); refusing to generate incomplete stubs", file=sys.stderr)
+        print(
+            f"Kotlin inventory has {len(report['issues'])} issue(s); refusing to generate incomplete stubs",
+            file=sys.stderr,
+        )
         return 1
 
     candidates = [cls for cls in report["classes"] if cls["port_status"] == "unported"]
@@ -44,7 +59,10 @@ def main() -> int:
     for cls in candidates:
         name = str(cls["name"])
         if not CLASS_NAME.fullmatch(name):
-            print(f"Skipping Kotlin class with unsupported Lua/Rust identifier: {name}", file=sys.stderr)
+            print(
+                f"Skipping Kotlin class with unsupported Lua/Rust identifier: {name}",
+                file=sys.stderr,
+            )
             continue
         target = PORTS / f"{name}.lua"
         if target.exists():
@@ -69,10 +87,14 @@ def main() -> int:
 
     if generated:
         test_source = TESTS_RS.read_text()
-        updated = register_classes(test_source, {str(cls["name"]) for _, cls in generated})
+        updated = register_classes(
+            test_source, {str(cls["name"]) for _, cls in generated}
+        )
         TESTS_RS.write_text(updated)
 
-    print(f"Generated {len(generated)} pending Kotlin port stub(s) and registered them in {TESTS_RS.relative_to(ROOT)}")
+    print(
+        f"Generated {len(generated)} pending Kotlin port stub(s) and registered them in {TESTS_RS.relative_to(ROOT)}"
+    )
     return 0
 
 

@@ -10,9 +10,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 
-from kotlin_coverage import build_report, has_gaps, markdown_report, parse_port, render_kotlin_stub
+from kotlin_coverage import (
+    build_report,
+    has_gaps,
+    markdown_report,
+    parse_port,
+    render_kotlin_stub,
+)
 
-SOURCE = '''class ExampleTest {
+SOURCE = """class ExampleTest {
     @Test
     fun testKnown() {}
 
@@ -25,9 +31,9 @@ SOURCE = '''class ExampleTest {
     @Test
     fun testMissing() {}
 }
-'''
+"""
 
-PORT = '''-- kotlin: sample/ExampleTest.kt@1.11.0
+PORT = """-- kotlin: sample/ExampleTest.kt@1.11.0
 describe("ExampleTest", function ()
     it("testKnown", function () end)
     -- adapted: this port exercises the same case with an existing primitive.
@@ -36,7 +42,7 @@ describe("ExampleTest", function ()
     pending("testTodo")
     it("testStale", function () end)
 end)
-'''
+"""
 
 
 class KotlinCoverageTests(unittest.TestCase):
@@ -62,7 +68,11 @@ class KotlinCoverageTests(unittest.TestCase):
         self.assertEqual(
             [
                 ("testKnown", "ported", ""),
-                ("testAdapted", "adapted", "this port exercises the same case with an existing primitive."),
+                (
+                    "testAdapted",
+                    "adapted",
+                    "this port exercises the same case with an existing primitive.",
+                ),
                 ("testTodo", "todo", "the API needed by this case is not available."),
                 ("testStale", "ported", ""),
             ],
@@ -71,7 +81,9 @@ class KotlinCoverageTests(unittest.TestCase):
         self.assertTrue(all(test.line > 0 for test in ports[0].tests))
 
     def test_report_includes_statuses_missing_and_stale_tests(self) -> None:
-        report = build_report([self.port_file], self.root, self.root, self.source_loader)
+        report = build_report(
+            [self.port_file], self.root, self.root, self.source_loader
+        )
         cls = report["classes"][0]
         self.assertEqual("ExampleTest", cls["name"])
         self.assertEqual(
@@ -81,15 +93,21 @@ class KotlinCoverageTests(unittest.TestCase):
         self.assertEqual([{"name": "testStale", "line": 8}], cls["stale_tests"])
         self.assertEqual(1, cls["counts"]["missing"])
         self.assertEqual(0, report["summary"]["not_applicable"])
-        self.assertIn("stale-test-mapping", {issue["code"] for issue in report["issues"]})
+        self.assertIn(
+            "stale-test-mapping", {issue["code"] for issue in report["issues"]}
+        )
         self.assertTrue(has_gaps(report))
 
     def test_json_shape_and_markdown_tree(self) -> None:
-        report = build_report([self.port_file], self.root, self.root, self.source_loader)
+        report = build_report(
+            [self.port_file], self.root, self.root, self.source_loader
+        )
         decoded = json.loads(json.dumps(report))
         self.assertEqual(1, decoded["schema_version"])
         self.assertIn("not_applicable", decoded["summary"])
-        self.assertEqual("sample/ExampleTest.kt", decoded["classes"][0]["kotlin_source"])
+        self.assertEqual(
+            "sample/ExampleTest.kt", decoded["classes"][0]["kotlin_source"]
+        )
         markdown = markdown_report(report)
         self.assertIn("# Kotlin coroutine test ports", markdown)
         self.assertIn("- **ExampleTest**", markdown)
@@ -98,37 +116,41 @@ class KotlinCoverageTests(unittest.TestCase):
         self.assertIn("## Issues", markdown)
 
     def test_valid_report_passes_check_when_only_todo_and_na_remain(self) -> None:
-        valid_source = '''class ExampleTest {
+        valid_source = """class ExampleTest {
     @Test
     fun testTodo() {}
 
     @Test
     fun testNa() {}
 }
-'''
-        self.port_file.write_text('''-- kotlin: sample/ExampleTest.kt@1.11.0
+"""
+        self.port_file.write_text("""-- kotlin: sample/ExampleTest.kt@1.11.0
 describe("ExampleTest", function ()
     -- todo: unavailable API.
     pending("testTodo")
     -- not-applicable: this case does not apply to the runtime.
     pending("testNa")
 end)
-''')
+""")
         report = build_report(
-            [self.port_file], self.root, self.root,
+            [self.port_file],
+            self.root,
+            self.root,
             lambda _path, _tag, _checkout: valid_source,
         )
         self.assertEqual([], report["issues"])
         self.assertFalse(has_gaps(report))
 
     def test_check_fails_for_missing_reason_and_duplicate_mapping(self) -> None:
-        self.port_file.write_text('''-- kotlin: sample/ExampleTest.kt@1.11.0
+        self.port_file.write_text("""-- kotlin: sample/ExampleTest.kt@1.11.0
 describe("ExampleTest", function ()
     pending("testKnown")
     pending("testKnown")
 end)
-''')
-        report = build_report([self.port_file], self.root, self.root, self.source_loader)
+""")
+        report = build_report(
+            [self.port_file], self.root, self.root, self.source_loader
+        )
         codes = {issue["code"] for issue in report["issues"]}
         self.assertIn("status-reason-missing", codes)
         self.assertIn("duplicate-test-mapping", codes)
@@ -136,45 +158,64 @@ end)
 
     def test_unresolved_source_is_an_issue_and_fails_check(self) -> None:
         report = build_report(
-            [self.port_file], self.root, self.root,
+            [self.port_file],
+            self.root,
+            self.root,
             lambda _path, _tag, _checkout: None,
         )
-        self.assertIn("kotlin-source-unresolved", {issue["code"] for issue in report["issues"]})
+        self.assertIn(
+            "kotlin-source-unresolved", {issue["code"] for issue in report["issues"]}
+        )
         self.assertTrue(has_gaps(report))
 
     def test_missing_kotlin_reference_is_an_issue(self) -> None:
         self.port_file.write_text('describe("ExampleTest", function () end)\n')
-        report = build_report([self.port_file], self.root, self.root, self.source_loader)
-        self.assertIn("kotlin-reference-missing", {issue["code"] for issue in report["issues"]})
+        report = build_report(
+            [self.port_file], self.root, self.root, self.source_loader
+        )
+        self.assertIn(
+            "kotlin-reference-missing", {issue["code"] for issue in report["issues"]}
+        )
         self.assertTrue(has_gaps(report))
 
     def test_inventory_adds_kotlin_classes_without_lua_ports(self) -> None:
         test_root = self.root / ".git/cdtag/1.11.0/kotlinx-coroutines-core/common/test"
         test_root.mkdir(parents=True)
         (test_root / "ExampleTest.kt").write_text(SOURCE)
-        (test_root / "UnportedTest.kt").write_text('''class UnportedTest {
+        (test_root / "UnportedTest.kt").write_text("""class UnportedTest {
     @Test
     fun testOnlyOnKotlin() {}
 }
-''')
-        (test_root / "InheritedTest.kt").write_text('''abstract class InheritedTestBase {
+""")
+        (
+            test_root / "InheritedTest.kt"
+        ).write_text("""abstract class InheritedTestBase {
     @Test
     fun testInherited() {}
 }
 
 class InheritedTest : InheritedTestBase()
-''')
+""")
         report = build_report(
-            [self.port_file], self.root, self.root, self.source_loader,
+            [self.port_file],
+            self.root,
+            self.root,
+            self.source_loader,
             inventory_tag="1.11.0",
         )
-        unported = next(cls for cls in report["classes"] if cls["name"] == "UnportedTest")
+        unported = next(
+            cls for cls in report["classes"] if cls["name"] == "UnportedTest"
+        )
         self.assertEqual("unported", unported["port_status"])
         self.assertIsNone(unported["lua_port"])
         self.assertEqual("missing", unported["tests"][0]["status"])
         self.assertEqual(2, report["summary"]["unported_classes"])
-        inherited = next(cls for cls in report["classes"] if cls["name"] == "InheritedTest")
-        self.assertEqual(["testInherited"], [test["name"] for test in inherited["tests"]])
+        inherited = next(
+            cls for cls in report["classes"] if cls["name"] == "InheritedTest"
+        )
+        self.assertEqual(
+            ["testInherited"], [test["name"] for test in inherited["tests"]]
+        )
         self.assertEqual(3, report["summary"]["classes"])
         self.assertTrue(has_gaps(report))
 
@@ -191,7 +232,9 @@ class InheritedTest : InheritedTestBase()
         self.assertEqual([], issues)
         self.assertEqual(["ExampleTest"], [port.cls for port in ports])
         self.assertEqual(["testOne", "testTwo"], [test.name for test in ports[0].tests])
-        self.assertTrue(all(test.status == "todo" and test.reason for test in ports[0].tests))
+        self.assertTrue(
+            all(test.status == "todo" and test.reason for test in ports[0].tests)
+        )
 
 
 if __name__ == "__main__":

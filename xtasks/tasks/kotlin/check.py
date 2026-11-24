@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --project xtasks python
-#MISE description="Report which kotlinx.coroutines tests the Kotlin ports cover (ported/adapted/not-applicable/defer/todo/missing)"
-#USAGE flag "--check" help="Exit 1 if a Kotlin test is missing from its port or a port names a test Kotlin does not have"
-#USAGE arg "[FILES]..." help="Port files (default: crates/luastd_runtime/tests/lua/kotlinx/*.lua)"
+# MISE description="Report which kotlinx.coroutines tests the Kotlin ports cover (ported/adapted/not-applicable/defer/todo/missing)"
+# USAGE flag "--check" help="Exit 1 if a Kotlin test is missing from its port or a port names a test Kotlin does not have"
+# USAGE arg "[FILES]..." help="Port files (default: crates/luastd_runtime/tests/lua/kotlinx/*.lua)"
 """Report coverage of the kotlinx.coroutines test ports."""
 
 from __future__ import annotations
@@ -18,10 +18,10 @@ from kotlin_coverage import (
     KOTLIN_TEST_TAG,
     inherited_test_methods,
     kotlin_class_test_methods,
+    kotlin_source,
     kotlin_test_sources,
     parse_port,
     relative,
-    kotlin_source,
 )
 
 PORTS = ROOT / "crates/luastd_runtime/tests/lua/kotlinx"
@@ -64,12 +64,40 @@ def main(argv: list[str]) -> int:
                     print(f"  ! {test.name} is not a @Test in {port.cls}")
                     problems += 1
             counts = {
-                status: sum(1 for name in kotlin_tests if mapped.get(name, ("missing",))[0] == status)
-                for status in ("ported", "adapted", "not-applicable", "defer", "todo", "missing")
+                status: sum(
+                    1
+                    for name in kotlin_tests
+                    if mapped.get(name, ("missing",))[0] == status
+                )
+                for status in (
+                    "ported",
+                    "adapted",
+                    "not-applicable",
+                    "defer",
+                    "todo",
+                    "missing",
+                )
             }
-            print("  " + ", ".join(f"{count} {status}" for status, count in counts.items()) + f" of {len(kotlin_tests)}")
+            print(
+                "  "
+                + ", ".join(f"{count} {status}" for status, count in counts.items())
+                + f" of {len(kotlin_tests)}"
+            )
     if totals:
-        print("total: " + ", ".join(f"{totals.get(status, 0)} {status}" for status in ("ported", "adapted", "not-applicable", "defer", "todo", "missing")))
+        print(
+            "total: "
+            + ", ".join(
+                f"{totals.get(status, 0)} {status}"
+                for status in (
+                    "ported",
+                    "adapted",
+                    "not-applicable",
+                    "defer",
+                    "todo",
+                    "missing",
+                )
+            )
+        )
     return 1 if check and problems else 0
 
 
