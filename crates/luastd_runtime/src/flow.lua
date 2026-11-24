@@ -42,6 +42,25 @@ function Flow:collect(fn)
     self._run(fn)
 end
 
+function Flow:collect_indexed(fn)
+    local i = 0
+    self._run(function (v)
+        fn(i, v)
+        i = i + 1
+    end)
+end
+
+function Flow:with_index()
+    local up = self
+    return new_flow(function (emit)
+        local i = 0
+        up._run(function (v)
+            emit({ index = i, value = v })
+            i = i + 1
+        end)
+    end)
+end
+
 function Flow:to_list()
     local acc = {}
     self._run(function (v) table.insert(acc, v) end)
@@ -104,6 +123,30 @@ function Flow:count()
     return n
 end
 
+function Flow:all(pred)
+    local result = true
+    self._run(function (v)
+        if not pred(v) then result = false end
+    end)
+    return result
+end
+
+function Flow:any(pred)
+    local result = false
+    self._run(function (v)
+        if pred(v) then result = true end
+    end)
+    return result
+end
+
+function Flow:none(pred)
+    local result = true
+    self._run(function (v)
+        if pred(v) then result = false end
+    end)
+    return result
+end
+
 function Flow:fold(initial, op)
     local acc = initial
     self._run(function (v) acc = op(acc, v) end)
@@ -126,6 +169,16 @@ function Flow:map(fn)
     local up = self
     return new_flow(function (emit)
         up._run(function (v) emit(fn(v)) end)
+    end)
+end
+
+function Flow:map_not_null(fn)
+    local up = self
+    return new_flow(function (emit)
+        up._run(function (v)
+            local r = fn(v)
+            if r ~= nil then emit(r) end
+        end)
     end)
 end
 
@@ -421,6 +474,28 @@ function Flow:combine(other, transform)
             bi = bi + 1
         end)
     end)
+end
+
+function flow.merge(flows)
+    return new_flow(function (emit)
+        async.supervisor_scope(function (scope)
+            local ch = async.channel(16)
+            local remaining = #flows
+            if remaining == 0 then ch:close() end
+            for _, f in ipairs(flows) do
+                scope:launch(function ()
+                    f._run(function (v) ch:send(v) end)
+                    remaining = remaining - 1
+                    if remaining <= 0 then ch:close() end
+                end)
+            end
+            for v in ch:iter() do emit(v) end
+        end)
+    end)
+end
+
+function Flow:merge(other)
+    return flow.merge({ self, other })
 end
 
 function Flow:flat_map_merge(fn)

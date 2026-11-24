@@ -32,6 +32,15 @@ function flow.of_one(value) end
 ---@param fn fun(value: any)
 function Flow:collect(fn) end
 
+--- Collect every value with its zero-based index.
+---@async
+---@param fn fun(index: integer, value: any)
+function Flow:collect_indexed(fn) end
+
+--- Pair each value with its zero-based index.
+---@return luastd.flow.Flow
+function Flow:with_index() end
+
 --- Collect all values into a table.
 ---@async
 ---@return any[]
@@ -59,6 +68,24 @@ function Flow:last() end
 ---@return integer
 function Flow:count() end
 
+--- True if all values match.
+---@async
+---@param predicate fun(value: any): boolean
+---@return boolean
+function Flow:all(predicate) end
+
+--- True if any value matches.
+---@async
+---@param predicate fun(value: any): boolean
+---@return boolean
+function Flow:any(predicate) end
+
+--- True if no value matches.
+---@async
+---@param predicate fun(value: any): boolean
+---@return boolean
+function Flow:none(predicate) end
+
 --- Fold with an initial accumulator.
 ---@async
 ---@param initial any
@@ -76,6 +103,11 @@ function Flow:reduce(op) end
 ---@param fn fun(value: any): any
 ---@return luastd.flow.Flow
 function Flow:map(fn) end
+
+--- Transform each value, dropping nil results.
+---@param fn fun(value: any): any
+---@return luastd.flow.Flow
+function Flow:map_not_null(fn) end
 
 --- Keep values matching the predicate.
 ---@param predicate fun(value: any): boolean
@@ -207,6 +239,16 @@ function Flow:zip(other, transform) end
 ---@param transform? fun(a: any, b: any): any
 ---@return luastd.flow.Flow
 function Flow:combine(other, transform) end
+
+--- Merge several flows into one.
+---@param flows luastd.flow.Flow[]
+---@return luastd.flow.Flow
+function flow.merge(flows) end
+
+--- Merge another flow into this one.
+---@param other luastd.flow.Flow
+---@return luastd.flow.Flow
+function Flow:merge(other) end
 
 --- A hot flow that replays the last `replay` values to new subscribers.
 ---@class luastd.flow.SharedFlow<T = any>: luastd.flow.Flow
