@@ -1232,7 +1232,7 @@ SharingStarted.__eq = function (a, b)
 end
 
 local function check_sharing_delay(value, name, allow_infinite)
-    if type(value) ~= "number" or value ~= value or value < 0 or (value ~= math.huge and value % 1 ~= 0)
+    if type(value) ~= "number" or value ~= value or value < 0 or (value ~= math.huge and value ~= math.floor(value))
         or (not allow_infinite and value == math.huge) then
         error(async._new_error("InvalidArgument", name .. " must be a non-negative integer"), 3)
     end
