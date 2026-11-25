@@ -10,13 +10,12 @@ local function error_of(fn)
 end
 
 describe("WithTimeoutOrNullDurationTest", function ()
-    -- adapted: the current API has raising with_timeout, so exercise the
-    -- successful no-timeout path with a long timeout budget.
+    -- adapted: duration literals are millisecond numbers in the Lua API.
     it(
         "testBasicNoSuspend",
         runtest(function (t)
             t:expect(1)
-            local result = async.with_timeout(10000, function ()
+            local result = async.with_timeout_or_null(10000, function ()
                 t:expect(2)
                 return "OK"
             end)
@@ -25,13 +24,12 @@ describe("WithTimeoutOrNullDurationTest", function ()
         end)
     )
 
-    -- adapted: use the raising with_timeout API with a long budget; this covers
-    -- the successful suspended path, not timeout-to-null behavior.
+    -- adapted: duration literals are millisecond numbers in the Lua API.
     it(
         "testBasicSuspend",
         runtest(function (t)
             t:expect(1)
-            local result = async.with_timeout(10000, function ()
+            local result = async.with_timeout_or_null(10000, function ()
                 t:expect(2)
                 async.yield()
                 t:expect(3)
@@ -42,8 +40,7 @@ describe("WithTimeoutOrNullDurationTest", function ()
         end)
     )
 
-    -- adapted: use with_timeout with a long budget to preserve the dispatch
-    -- ordering while omitting the unsupported null-on-timeout result.
+    -- adapted: duration literals are millisecond numbers in the Lua API.
     it(
         "testDispatch",
         runtest(function (t)
@@ -54,7 +51,7 @@ describe("WithTimeoutOrNullDurationTest", function ()
                 t:expect(7)
             end)
             t:expect(2)
-            local result = async.with_timeout(1000, function ()
+            local result = async.with_timeout_or_null(1000, function ()
                 t:expect(3)
                 async.yield()
                 t:expect(5)
@@ -67,13 +64,27 @@ describe("WithTimeoutOrNullDurationTest", function ()
         end)
     )
 
-    -- defer: async.with_timeout raises Timeout on expiry; there is no API that
-    -- converts a timed-out yielding loop into a nil result.
-    pending("testYieldBlockingWithTimeout")
+    it(
+        "testYieldBlockingWithTimeout",
+        runtest(function (t)
+            t:expect(1)
+            local result = async.with_timeout_or_null(100, function ()
+                while true do
+                    async.yield()
+                end
+            end)
+            assert.is_nil(result)
+            t:finish(2)
+        end)
+    )
 
-    -- defer: the suspended channel receive can be timed out, but the current
-    -- API raises Timeout instead of returning Kotlin's null result.
-    pending("testSmallTimeout")
+    it(
+        "testSmallTimeout",
+        runtest(function ()
+            local channel = async.channel(1)
+            assert.is_nil(async.with_timeout_or_null(1, function () return channel:receive() end))
+        end)
+    )
 
     -- adapted: use a structured TestException instead of AssertionError and an
     -- infinite timeout; this still checks that body failures pass through.
@@ -82,23 +93,59 @@ describe("WithTimeoutOrNullDurationTest", function ()
         runtest(function ()
             local failure = luastd_test.TestException()
             local err = error_of(function ()
-                async.with_timeout(math.huge, function () error(failure, 0) end)
+                async.with_timeout_or_null(math.huge, function () error(failure, 0) end)
             end)
             assert.is_true(rawequal(failure, err))
         end)
     )
 
-    -- defer: without with_timeout_or_null, nested timeout ownership cannot be
-    -- distinguished to suppress only the outer timeout.
-    pending("testInnerTimeout")
+    it(
+        "testInnerTimeout",
+        runtest({ expected = "Timeout" }, function (t)
+            async.with_timeout_or_null(1000, function ()
+                async.with_timeout(10, function ()
+                    while true do
+                        async.yield()
+                    end
+                end)
+                t:expect_unreached()
+            end)
+            t:expect_unreached()
+        end)
+    )
 
-    -- defer: without with_timeout_or_null, this cannot verify that an inner
-    -- Timeout remains visible instead of being suppressed by the outer scope.
-    pending("testNestedTimeout")
+    it(
+        "testNestedTimeout",
+        runtest({ expected = "Timeout" }, function (t)
+            async.with_timeout_or_null(math.huge, function ()
+                async.with_timeout(10, function ()
+                    async.delay(math.huge)
+                    return 1
+                end)
+            end)
+            t:expect_unreached()
+        end)
+    )
 
-    -- defer: the API has no timeout-to-null operation for the nested timeout
-    -- loop and cannot check the bounded retry count after each null result.
-    pending("testOuterTimeout")
+    it(
+        "testOuterTimeout",
+        runtest(function ()
+            local counter = 0
+            local result = async.with_timeout_or_null(320, function ()
+                while true do
+                    local inner = async.with_timeout_or_null(150, function ()
+                        while true do
+                            async.yield()
+                        end
+                    end)
+                    assert.is_nil(inner)
+                    counter = counter + 1
+                end
+            end)
+            assert.is_nil(result)
+            assert.is_true(counter >= 1 and counter <= 2)
+        end)
+    )
 
     -- adapted: use a table with failing metamethods and rawequal, matching the
     -- existing WithTimeoutTest adaptation for Kotlin BadClass.
@@ -109,29 +156,47 @@ describe("WithTimeoutOrNullDurationTest", function ()
                 error("BadClass")
             end
             local value = setmetatable({}, { __eq = bad, __hash = bad, __tostring = bad, __len = bad })
-            local result = async.with_timeout(100, function () return value end)
+            local result = async.with_timeout_or_null(100, function () return value end)
             assert.is_true(rawequal(value, result))
         end)
     )
 
-    -- defer: async.with_timeout raises Timeout rather than returning nil when
-    -- the delay exceeds its deadline.
-    pending("testNullOnTimeout")
+    it(
+        "testNullOnTimeout",
+        runtest(function (t)
+            t:expect(1)
+            local result = async.with_timeout_or_null(100, function ()
+                t:expect(2)
+                async.delay(1000)
+                t:expect_unreached()
+                return "OK"
+            end)
+            assert.is_nil(result)
+            t:finish(3)
+        end)
+    )
 
-    -- defer: cancellation cannot be caught to return a body result (ADR 0005),
-    -- and no timeout-to-null builder exists.
+    -- not-applicable: ADR 0005 makes timeout cancellation uncatchable, so the
+    -- Kotlin cancellation catch cannot continue and return a body result.
     pending("testSuppressExceptionWithResult")
 
-    -- defer: ADR 0005 makes cancellation uncatchable, and no timeout-to-null
-    -- builder exists to distinguish the body failure from the timeout.
+    -- not-applicable: ADR 0005 makes timeout cancellation uncatchable, so the
+    -- Kotlin catch cannot replace the timeout with TestException.
     pending("testSuppressExceptionWithAnotherException")
 
-    -- defer: with_timeout reports an immediate Timeout error for non-positive
-    -- durations; no API returns null for these timeout cases.
-    pending("testNegativeTimeout")
+    it(
+        "testNegativeTimeout",
+        runtest(function (t)
+            t:expect(1)
+            local ran = false
+            assert.is_nil(async.with_timeout_or_null(-1, function () ran = true end))
+            assert.is_nil(async.with_timeout_or_null(0, function () ran = true end))
+            assert.is_false(ran)
+            t:finish(2)
+        end)
+    )
 
-    -- adapted: verify a body TestException escapes with_timeout; use the
-    -- runtime's structured error instead of relying on Kotlin's test exception.
+    -- adapted: use the runtime's structured TestException instead of Kotlin's.
     it(
         "testExceptionFromWithinTimeout",
         runtest(function (t)
@@ -139,7 +204,7 @@ describe("WithTimeoutOrNullDurationTest", function ()
             local failure = luastd_test.TestException()
             local err = error_of(function ()
                 t:expect(2)
-                async.with_timeout(1000, function ()
+                async.with_timeout_or_null(1000, function ()
                     t:expect(3)
                     error(failure, 0)
                 end)

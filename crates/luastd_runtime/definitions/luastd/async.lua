@@ -258,6 +258,16 @@ function async.supervisor_scope(body) end
 ---@return T...
 function async.with_timeout(ms, body) end
 
+--- Run `body` with a timeout, returning nil only when this timeout expires.
+--- Errors from the body and nested timeouts propagate; parent cancellation
+--- remains uncatchable. A non-positive timeout returns nil without running body.
+---@async
+---@generic T
+---@param ms   number
+---@param body async fun(scope: luastd.async.Scope): T
+---@return T?
+function async.with_timeout_or_null(ms, body) end
+
 --- A name carried in a coroutine context. Child jobs inherit the effective
 --- name; a nested `with_context` can temporarily replace it.
 ---@class luastd.async.CoroutineName

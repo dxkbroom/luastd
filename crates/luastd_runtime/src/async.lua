@@ -82,6 +82,7 @@ end
 local coroutine_contexts = setmetatable({}, { __mode = "k" })
 local coroutine_names = setmetatable({}, { __mode = "k" })
 local completable_channels = setmetatable({}, { __mode = "k" })
+local timeout_error_owners = setmetatable({}, { __mode = "k" })
 
 local CoroutineContext = {}
 CoroutineContext.__index = CoroutineContext
@@ -145,7 +146,7 @@ core.set_runner(function (handle, body)
     finish(handle, result)
 end)
 
-local function run_scope(kind, body, ms, coroutine_name, parent)
+local function run_scope(kind, body, ms, coroutine_name, parent, timeout_owner)
     local handle = core.enter(kind, coroutine_name, parent)
     if ms then core.timeout(handle, ms) end
     local result
@@ -165,7 +166,9 @@ local function run_scope(kind, body, ms, coroutine_name, parent)
         if name then
             message = ('Coroutine "%s" %s'):format(name, message:sub(1, 1):lower() .. message:sub(2))
         end
-        error(new_error("Timeout", message), 0)
+        local err = new_error("Timeout", message)
+        if timeout_owner then timeout_error_owners[err] = timeout_owner end
+        error(err, 0)
     end
     raise_cancelled()
 end
@@ -401,7 +404,30 @@ function async.with_timeout(ms, body)
     check_fn(body, 2, "with_timeout")
     -- As in kotlinx.coroutines: no time at all times out before the body runs.
     if ms <= 0 then error(new_error("Timeout", "Timed out immediately"), 0) end
-    return run_scope("timeout", body, ms)
+    return run_scope("timeout", body, ms, nil, nil, {})
+end
+
+function async.with_timeout_or_null(ms, body)
+    if type(ms) ~= "number" or ms ~= ms then
+        error(
+            new_error(
+                "InvalidArgument",
+                ("bad argument #1 to 'with_timeout_or_null' (number of milliseconds expected, got %s)"):format(
+                    tostring(ms)
+                )
+            ), 2
+        )
+    end
+    check_fn(body, 2, "with_timeout_or_null")
+    if ms <= 0 then return nil end
+
+    local owner = {}
+    local result = pack(raw_pcall(run_scope, "timeout", body, ms, nil, nil, owner))
+    if result[1] then return unpack(result, 2, result.n) end
+    local err = result[2]
+    if rawequal(err, CANCELLED) then raise_cancelled() end
+    if timeout_error_owners[err] == owner then return nil end
+    error(err, 0)
 end
 
 function async.coroutine_name(name)
