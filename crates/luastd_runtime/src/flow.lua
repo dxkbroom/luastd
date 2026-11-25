@@ -1035,6 +1035,20 @@ function flow.mutable_shared_flow(replay, extra, on_overflow)
     return sf
 end
 
+-- Eager sharing only: SharingStarted strategies are deliberately not modeled here.
+function Flow:share_in(scope, replay)
+    if type(scope) ~= "table" or type(scope.launch) ~= "function" or type(scope.coroutine_context) ~= "function" then
+        error(async._new_error("InvalidArgument", "share_in requires an async Scope"), 2)
+    end
+    async.with_context(scope:coroutine_context(), function () async.ensure_active() end)
+    replay = replay or 0
+    local shared = flow.mutable_shared_flow(replay, 64, "SUSPEND")
+    scope:launch(function ()
+        self._run(function (value) shared:emit(value) end)
+    end)
+    return shared:as_shared_flow()
+end
+
 function flow.mutable_state_flow(initial)
     local sf = flow.mutable_shared_flow(1, 0, "DROP_OLDEST")
     -- seed replay buffer

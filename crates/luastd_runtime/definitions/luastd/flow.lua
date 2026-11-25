@@ -225,6 +225,14 @@ function Flow:take(n) end
 ---@return luastd.flow.StateFlow<T>
 function Flow:state_in(scope, initial) end
 
+--- Eagerly collect this flow in `scope` and expose values through a read-only shared flow.
+--- Collection starts immediately and continues until the scope is cancelled or upstream completes.
+--- This API deliberately has no `SharingStarted` argument; lazy and while-subscribed policies are unsupported.
+---@param scope   luastd.async.Scope
+---@param replay? integer
+---@return luastd.flow.SharedFlow<T>
+function Flow:share_in(scope, replay) end
+
 --- Drop the first `n` values.
 ---@param n integer
 ---@return luastd.flow.Flow<T>
@@ -386,17 +394,22 @@ SharedFlow.replay_cache = {}
 ---@type integer
 SharedFlow.subscription_count = 0
 
+--- Mutable shared flow surface; `share_in` returns only the read-only SharedFlow.
+---@class luastd.flow.MutableSharedFlow<T = any>: luastd.flow.SharedFlow<T>
+local MutableSharedFlow = {}
+
 --- Emit a value to all subscribers.
+---@async
 ---@param value T
-function SharedFlow:emit(value) end
+function MutableSharedFlow:emit(value) end
 
 --- Try to emit without suspending.
 ---@param value T
 ---@return boolean
-function SharedFlow:try_emit(value) end
+function MutableSharedFlow:try_emit(value) end
 
 --- Clear values available to future subscribers without changing active collectors.
-function SharedFlow:reset_replay_cache() end
+function MutableSharedFlow:reset_replay_cache() end
 
 --- Run `action` after a collector subscribes and before replayed values are delivered.
 ---@param action fun(emit: fun(value: T))
@@ -412,7 +425,7 @@ function SharedFlow:as_shared_flow() end
 ---@param replay?       integer
 ---@param extra_buffer? integer
 ---@param on_overflow?  "SUSPEND" | "DROP_OLDEST" | "DROP_LATEST"
----@return luastd.flow.SharedFlow<T>
+---@return luastd.flow.MutableSharedFlow<T>
 function flow.mutable_shared_flow(replay, extra_buffer, on_overflow) end
 
 --- A read-only state flow holding a single state value.
