@@ -60,6 +60,16 @@ local function invalid_shared_flow_argument(message)
     error(async._new_error("InvalidArgument", message), 0)
 end
 
+local function invalid_flow_buffer_argument(message)
+    error(async._new_error("InvalidArgument", message), 0)
+end
+
+local BUFFER_OVERFLOW_MODES = {
+    SUSPEND = "suspend",
+    DROP_OLDEST = "drop_oldest",
+    DROP_LATEST = "drop_latest"
+}
+
 local function new_flow(run)
     return setmetatable({ _run = run }, Flow)
 end
@@ -530,22 +540,25 @@ function Flow:distinct_until_changed(key, are_equal)
     return result
 end
 
-local function buffered(base, capacity, is_default)
+local function buffered(base, capacity, is_default, overflow)
     local result = new_flow(function (emit)
         async.scope(function (scope)
-            local ch = async.channel(capacity)
+            local ch = async.channel(capacity, overflow)
+            scope:launch(function ()
+                for v in ch:iter() do
+                    emit(v)
+                end
+            end)
             scope:launch(function ()
                 base._run(function (v) ch:send(v) end)
                 ch:close()
             end)
-            for v in ch:iter() do
-                emit(v)
-            end
         end)
     end)
     result._buffer_base = base
     result._buffer_capacity = capacity
     result._buffer_default = is_default
+    result._buffer_overflow = overflow
     return result
 end
 
@@ -558,7 +571,7 @@ function Flow:flow_on(ctx)
                 up._buffer_base._run(emit)
             end)
         end)
-        return buffered(base, up._buffer_capacity, up._buffer_default)
+        return buffered(base, up._buffer_capacity, up._buffer_default, up._buffer_overflow)
     end
     return new_flow(function (emit)
         async.with_context(ctx, function ()
@@ -581,15 +594,36 @@ function Flow:cancellable()
     return result
 end
 
-function Flow:buffer(cap)
-    if self._shared_flow and cap == 0 then return self end
+function Flow:buffer(cap, overflow)
+    if overflow == nil then overflow = "SUSPEND" end
+    if type(overflow) ~= "string" or BUFFER_OVERFLOW_MODES[overflow] == nil then
+        invalid_flow_buffer_argument("invalid flow buffer overflow mode")
+    end
+    overflow = BUFFER_OVERFLOW_MODES[overflow]
+    if cap == async.CONFLATED then
+        if overflow ~= "suspend" then
+            invalid_flow_buffer_argument("conflated capacity cannot be combined with an overflow mode")
+        end
+        cap = 1
+        overflow = "drop_oldest"
+    end
+    if cap ~= nil and (type(cap) ~= "number" or cap < 0 or cap % 1 ~= 0) then
+        invalid_flow_buffer_argument("flow buffer capacity must be a non-negative integer")
+    end
+    if self._shared_flow and cap == 0 and overflow == "suspend" then return self end
     local base = self._buffer_base or self
     local previous_capacity = self._buffer_capacity
     local previous_default = self._buffer_default
-    local is_default = cap == nil and (previous_capacity == nil or previous_default)
+    local previous_overflow = self._buffer_overflow or "suspend"
+    local is_default = cap == nil and overflow == "suspend" and (previous_capacity == nil or previous_default)
     local capacity
-    if previous_capacity == nil then
+    if overflow ~= "suspend" then
+        capacity = math.max(cap == nil and 1 or cap, 1)
+    elseif previous_capacity == nil then
         capacity = cap == nil and 64 or cap
+    elseif previous_overflow ~= "suspend" then
+        capacity = cap == nil and previous_capacity or cap
+        overflow = previous_overflow
     elseif previous_default and cap == nil then
         capacity = 64
     elseif previous_default then
@@ -599,7 +633,7 @@ function Flow:buffer(cap)
     else
         capacity = previous_capacity + cap
     end
-    return buffered(base, capacity, is_default)
+    return buffered(base, capacity, is_default, overflow)
 end
 
 function Flow:catch(handler)
@@ -766,8 +800,7 @@ function Flow:chunked(size)
 end
 
 function Flow:conflate()
-    -- no-op in the synchronous model (no backpressure to drop)
-    return self
+    return self:buffer(async.CONFLATED)
 end
 
 function Flow:collect_latest(fn)

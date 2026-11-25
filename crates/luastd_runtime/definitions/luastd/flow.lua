@@ -298,9 +298,11 @@ function Flow:flow_on(context) end
 function Flow:cancellable() end
 
 --- Buffer upstream with a channel of capacity `cap` (default 64).
+--- `async.CONFLATED` selects capacity one with `DROP_OLDEST`.
 ---@param cap? integer
+---@param overflow? "SUSPEND" | "DROP_OLDEST" | "DROP_LATEST"
 ---@return luastd.flow.Flow<T>
-function Flow:buffer(cap) end
+function Flow:buffer(cap, overflow) end
 
 --- Catch an error from upstream and optionally emit recovery values.
 ---@param handler fun(emit: fun(value: T), err: any)
@@ -361,7 +363,7 @@ function Flow:retry_when(predicate) end
 ---@return luastd.flow.Flow<table<integer, T>>
 function Flow:chunked(size) end
 
---- Keep only the latest value when the collector is slow (no-op in sync model).
+--- Keep the latest value when the collector is slower than upstream.
 ---@return luastd.flow.Flow<T>
 function Flow:conflate() end
 
