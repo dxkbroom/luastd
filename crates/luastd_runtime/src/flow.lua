@@ -529,6 +529,7 @@ end
 
 function Flow:distinct_until_changed(key, are_equal)
     local requested_key, requested_are_equal = key, are_equal
+    if rawget(self, "_state_flow") and requested_key == nil and requested_are_equal == nil then return self end
     local config = rawget(self, "_distinct_until_changed_config")
     if config and config.key == requested_key and config.are_equal == requested_are_equal then
         return self
@@ -623,7 +624,8 @@ function Flow:buffer(cap, overflow)
         invalid_flow_buffer_argument("invalid flow buffer overflow mode")
     end
     overflow = BUFFER_OVERFLOW_MODES[overflow]
-    if cap == async.CONFLATED then
+    local conflated = cap == async.CONFLATED
+    if conflated then
         if overflow ~= "suspend" then
             invalid_flow_buffer_argument("conflated capacity cannot be combined with an overflow mode")
         end
@@ -632,6 +634,13 @@ function Flow:buffer(cap, overflow)
     end
     if cap ~= nil and (type(cap) ~= "number" or cap < 0 or cap % 1 ~= 0) then
         invalid_flow_buffer_argument("flow buffer capacity must be a non-negative integer")
+    end
+    if self._state_flow and (
+        (conflated and overflow == "suspend")
+        or (cap == 0 and overflow == "suspend")
+        or overflow == "drop_oldest"
+    ) then
+        return self
     end
     if self._shared_flow and cap == 0 and overflow == "suspend" then return self end
     local base = self._buffer_base or self
@@ -1139,7 +1148,7 @@ function flow.mutable_state_flow(initial)
     local sf = flow.mutable_shared_flow(1, 0, "DROP_OLDEST")
     -- seed replay buffer
     sf._replay_buffer = { encode_shared(initial) }
-    local state = { _sf = sf, _value = initial, value = initial }
+    local state = { _sf = sf, _value = initial, value = initial, _state_flow = true }
     function state:get_value()
         return self.value
     end
@@ -1175,7 +1184,8 @@ local function readonly_state_flow(state)
     local view = {
         _sf = state._sf,
         _run = state._run,
-        _shared_flow = true
+        _shared_flow = true,
+        _state_flow = true
     }
     return setmetatable(view, {
         __index = function (self, key)

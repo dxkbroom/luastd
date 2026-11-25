@@ -169,9 +169,20 @@ describe("StateFlowTest", function ()
         end)
     )
 
-    -- defer: StateFlow operations do not fuse to the same object; the current
-    -- Flow operators wrap their source or support only limited no-op behavior.
-    pending("testOperatorFusion")
+    it(
+        "testOperatorFusion",
+        runtest(function ()
+            local state = flow.mutable_state_flow("state")
+            local context = async.context(async.coroutine_name("fusion"))
+            assert.is_true(rawequal(state, state:cancellable()))
+            assert.is_true(rawequal(state, state:distinct_until_changed()))
+            assert.is_false(rawequal(state, state:distinct_until_changed(function (value) return value end)))
+            assert.is_true(rawequal(state, state:flow_on(context)))
+            assert.is_true(rawequal(state, state:conflate()))
+            assert.is_true(rawequal(state, state:buffer(async.CONFLATED)))
+            assert.is_true(rawequal(state, state:buffer(0)))
+        end)
+    )
 
     -- adapted: Lua omits reset_replay_cache entirely; verify the operation is
     -- unavailable and the state value remains intact.

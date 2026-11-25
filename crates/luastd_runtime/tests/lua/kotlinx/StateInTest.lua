@@ -4,8 +4,23 @@ local runtest = require("luastd_test").runtest
 
 -- kotlin: kotlinx-coroutines-core/common/test/flow/sharing/StateInTest.kt@1.11.0
 describe("StateInTest", function ()
-    -- defer: StateIn currently has no started-strategy fusion or wrapper identity semantics.
-    pending("testOperatorFusion")
+    it(
+        "testOperatorFusion",
+        runtest(function ()
+            local state = flow.of_one("OK"):state_in(async.current())
+            local context = async.context(async.coroutine_name("fusion"))
+            assert.is_nil(state.set_value)
+            assert.is_true(rawequal(state, state:cancellable()))
+            assert.is_true(rawequal(state, state:distinct_until_changed()))
+            assert.is_true(rawequal(state, state:flow_on(context)))
+            assert.is_true(rawequal(state, state:conflate()))
+            assert.is_true(rawequal(state, state:buffer(async.CONFLATED)))
+            assert.is_true(rawequal(state, state:buffer(0)))
+            assert.is_true(rawequal(state, state:buffer(nil, "DROP_OLDEST")))
+            assert.is_true(rawequal(state, state:buffer(0, "DROP_OLDEST")))
+            assert.is_true(rawequal(state, state:buffer(1, "DROP_OLDEST")))
+        end)
+    )
 
     -- adapted: state_in without an initial value waits for the first upstream emission;
     -- this flow completes immediately after producing the value, so no sharing Job is exposed.
