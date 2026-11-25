@@ -331,7 +331,7 @@ function Flow:transform_latest(fn) end
 
 --- Transform while `fn` returns true.
 ---@generic U
----@param fn fun(emit: fun(value: U), value: T): boolean?
+---@param fn async fun(emit: fun(value: U), value: T): boolean?
 ---@return luastd.flow.Flow<U>
 function Flow:transform_while(fn) end
 
