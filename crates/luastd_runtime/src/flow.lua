@@ -650,12 +650,14 @@ end
 function Flow:transform_while(fn)
     local up = self
     return new_flow(function (emit)
-        local cont = true
-        up._run(function (v)
-            if not cont then return end
-            local r = fn(emit, v)
-            if r == false then cont = false end
+        local ok, err = pcall(function ()
+            up._run(function (v)
+                if fn(emit, v) == false then error(BREAK) end
+            end)
         end)
+        if not ok and not rawequal(err, BREAK) then
+            error(err, 0)
+        end
     end)
 end
 
