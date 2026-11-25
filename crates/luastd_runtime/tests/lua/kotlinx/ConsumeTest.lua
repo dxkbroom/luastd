@@ -99,7 +99,7 @@ describe("ConsumeTest", function ()
         end)
     )
 
-    -- not-applicable: BroadcastChannel.consume is unavailable; luastd exposes
-    -- Channel and SharedFlow instead.
+    -- deprecated: this Kotlin regression test exercises the deprecated
+    -- BroadcastChannel.consume API; luastd exposes Channel and SharedFlow.
     pending("testBroadcastChannelConsumeJsMiscompilation")
 end)

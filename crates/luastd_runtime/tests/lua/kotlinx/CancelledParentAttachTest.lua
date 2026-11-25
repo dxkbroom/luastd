@@ -30,8 +30,8 @@ describe("CancelledParentAttachTest", function ()
     -- it has no context/parent parameter for this isolated attachment case.
     pending("testProduce")
 
-    -- not-applicable: luastd does not expose the deprecated BroadcastChannel
-    -- builder or configurable CoroutineStart modes.
+    -- deprecated: Kotlin's test uses the deprecated BroadcastChannel builder;
+    -- configurable CoroutineStart modes are also unavailable in luastd.
     pending("testBroadcast")
 
     -- not-applicable: Kotlin catches cancellation to continue checking several
