@@ -29,9 +29,25 @@ describe("TakeWhileTest", function ()
         end)
     )
 
-    -- defer: the case asserts cancellation of a structured child after the
-    -- predicate rejects an emission; take_while currently only stops forwarding.
-    pending("testCancelUpstream")
+    -- adapted: observe the upstream scope's child cleanup when take_while
+    -- rejects the second value and stops collecting.
+    it(
+        "testCancelUpstream",
+        runtest(function ()
+            local async = require("luastd.async")
+            local cancelled = false
+            local source = flow.new(function (emit)
+                async.scope(function (scope)
+                    local child = scope:launch(function () async.delay(math.huge) end)
+                    child:on_cancel(function () cancelled = true end)
+                    emit(1)
+                    emit(2)
+                end)
+            end)
+            assert.same({ 1 }, source:take_while(function (value) return value < 2 end):to_list())
+            assert.is_true(cancelled)
+        end)
+    )
 
     -- adapted: a synchronous source verifies predicate-error propagation through
     -- catch and recovery output, without claiming structured-child cancellation.

@@ -448,15 +448,13 @@ end
 function Flow:take_while(pred)
     local up = self
     return new_flow(function (emit)
-        local taking = true
-        up._run(function (v)
-            if not taking then return end
-            if pred(v) then
+        local ok, err = pcall(function ()
+            up._run(function (v)
+                if not pred(v) then error(BREAK) end
                 emit(v)
-            else
-                taking = false
-            end
+            end)
         end)
+        if not ok and not rawequal(err, BREAK) then error(err, 0) end
     end)
 end
 
