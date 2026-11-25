@@ -1,17 +1,17 @@
 -- Port of kotlinx.coroutines' OnStartTest.
----@diagnostic disable: await-in-sync
-
 local flow = require("luastd.flow")
+local runtest = require("luastd_test").runtest
 
 -- kotlin: kotlinx-coroutines-core/common/test/flow/operators/OnStartTest.kt@1.11.0
 describe("OnStartTest", function ()
-    it("testEmitExample", function ()
-        local started = false
-        local r = flow.from({ 1, 2 }):on_start(function () started = true end):to_list()
-        assert.is_true(started)
-        assert.is_equal(2, #r)
-    end)
+    it("testEmitExample", runtest(function ()
+        local result = flow.from({ "a", "b", "c" })
+            :on_start(function (emit) emit("Begin") end)
+            :to_list()
+        assert.same({ "Begin", "a", "b", "c" }, result)
+    end))
 
-    -- defer: transparency violation semantics.
+    -- defer: on_start receives a synchronous emit callback and does not enforce
+    -- Kotlin Flow's context-preserving emission rule for child coroutines.
     pending("testTransparencyViolation")
 end)
