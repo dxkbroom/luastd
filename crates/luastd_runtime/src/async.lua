@@ -870,4 +870,7 @@ function Mutex:with_lock(body)
     async.finally(body, function () self:unlock(nil) end)
 end
 
+-- Internal bridge for sibling runtime modules that need structured errors.
+async._new_error = new_error
+
 return async, pcall, xpcall
