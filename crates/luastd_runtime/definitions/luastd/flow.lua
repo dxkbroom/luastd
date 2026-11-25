@@ -255,7 +255,7 @@ function Flow:on_completion(fn) end
 function Flow:on_start(fn) end
 
 --- Run `fn` when the flow completes without emitting any value.
----@param fn fun()
+---@param fn async fun()
 ---@return luastd.flow.Flow<T>
 function Flow:on_empty(fn) end
 
