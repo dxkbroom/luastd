@@ -22,9 +22,14 @@ describe("DropTest", function ()
         assert.is_equal(0, #r)
     end))
 
-    -- defer: Flow:drop accepts negative counts and treats them as dropping no
-    -- values; Kotlin throws IllegalArgumentException when the operator is built.
-    pending("testNegativeCount")
+    -- adapted: Kotlin throws IllegalArgumentException; luastd reports structured InvalidArgument.
+    it("testNegativeCount", runtest(function ()
+        for _, count in ipairs({ -1, 1.5 }) do
+            local ok, err = pcall(function () flow.empty():drop(count) end)
+            assert.is_false(ok)
+            assert.is_equal("InvalidArgument", err.kind)
+        end
+    end))
 
     -- adapted: a rendezvous latch yields to the structured child before the
     -- second value reaches map; the mapper error cancels upstream before catch recovers.

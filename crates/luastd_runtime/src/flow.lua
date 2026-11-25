@@ -411,6 +411,9 @@ function Flow:take(n)
 end
 
 function Flow:drop(n)
+    if type(n) ~= "number" or n ~= n or n < 0 or n == math.huge or n ~= math.floor(n) then
+        error(async._new_error("InvalidArgument", "drop count must be a non-negative integer"), 2)
+    end
     local up = self
     return new_flow(function (emit)
         local count = 0
