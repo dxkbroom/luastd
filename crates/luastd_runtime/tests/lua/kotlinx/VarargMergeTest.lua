@@ -32,9 +32,36 @@ describe("VarargMergeTest", function ()
         end)
     )
 
-    -- not-applicable: Lua nil cannot be retained as a flow value in the
-    -- channel-backed merge or represented as an element of a sequence table.
-    pending("testNulls")
+    -- adapted: merge transports tagged events through its internal Channel;
+    -- callback counts verify null values without storing them in a Lua array.
+    it(
+        "testNulls",
+        runtest(function ()
+            local left = flow.new(function (emit)
+                emit(1)
+                emit(nil)
+            end)
+            local right = flow.new(function (emit)
+                emit(nil)
+                emit(2)
+            end)
+            local ones, twos, nulls = 0, 0, 0
+            flow.merge({ left, right }):collect(function (value)
+                if value == nil then
+                    nulls = nulls + 1
+                elseif value == 1 then
+                    ones = ones + 1
+                elseif value == 2 then
+                    twos = twos + 1
+                else
+                    error("unexpected merged value: " .. tostring(value))
+                end
+            end)
+            assert.is_equal(1, ones)
+            assert.is_equal(1, twos)
+            assert.is_equal(2, nulls)
+        end)
+    )
 
     -- adapted: CoroutineName stands in for NamedDispatchers; the source's
     -- flow_on context remains effective through the table-based merge.

@@ -28,9 +28,36 @@ describe("IterableMergeTest", function ()
         end)
     )
 
-    -- not-applicable: flow.merge sends through Channel, which rejects nil;
-    -- Lua sequence tables also cannot represent a null source element.
-    pending("testNulls")
+    -- adapted: merge now transports tagged events through its internal Channel;
+    -- callback counts verify null values without storing them in a Lua array.
+    it(
+        "testNulls",
+        runtest(function ()
+            local left = flow.new(function (emit)
+                emit(1)
+                emit(nil)
+            end)
+            local right = flow.new(function (emit)
+                emit(nil)
+                emit(2)
+            end)
+            local ones, twos, nulls = 0, 0, 0
+            flow.merge({ left, right }):collect(function (value)
+                if value == nil then
+                    nulls = nulls + 1
+                elseif value == 1 then
+                    ones = ones + 1
+                elseif value == 2 then
+                    twos = twos + 1
+                else
+                    error("unexpected merged value: " .. tostring(value))
+                end
+            end)
+            assert.is_equal(1, ones)
+            assert.is_equal(1, twos)
+            assert.is_equal(2, nulls)
+        end)
+    )
 
     -- adapted: use CoroutineName instead of NamedDispatchers to check that a
     -- source's flow_on context is preserved through iterable merge.

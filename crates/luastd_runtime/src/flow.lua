@@ -921,13 +921,13 @@ function flow.merge(flows)
             if remaining == 0 then ch:close() end
             for _, f in ipairs(flows) do
                 scope:launch(function ()
-                    f._run(function (v) ch:send(v) end)
+                    f._run(function (v) ch:send({ kind = "value", value = v }) end)
                     remaining = remaining - 1
                     if remaining <= 0 then ch:close() end
                 end)
             end
-            for v in ch:iter() do
-                emit(v)
+            for event in ch:iter() do
+                emit(event.value)
             end
         end)
     end)
