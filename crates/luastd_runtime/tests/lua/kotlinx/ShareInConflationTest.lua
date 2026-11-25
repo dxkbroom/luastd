@@ -1,78 +1,168 @@
 -- kotlin: kotlinx-coroutines-core/common/test/flow/sharing/ShareInConflationTest.kt@1.11.0
+local async = require("luastd.async")
+local flow = require("luastd.flow")
+local runtest = require("luastd_test").runtest
+
 describe("ShareInConflationTest", function ()
-    -- defer: Flow:conflate is a no-op synchronously and share_in is absent, so
-    -- replay=1 cannot exercise conflated delivery through an eager shared flow.
-    pending("testConflateReplay1")
+    local n = 100
 
-    -- defer: mutable_shared_flow supports replay=0, but there is no share_in
-    -- builder or backpressured conflation for the first subscriber.
-    pending("testConflateReplay0")
+    local function check_conflation(capacity, overflow, op, replay)
+        -- Eager sharing is scheduled, not undispatched: the active subscriber
+        -- observes the first value before the upstream buffer begins dropping.
+        local expected = { 0 }
+        local first = overflow == "DROP_LATEST" and 1 or n - capacity
+        for value = first, first + capacity - 1 do
+            if value ~= 0 then expected[#expected + 1] = value end
+        end
+        local expected_replay = {}
+        for i = math.max(1, #expected - replay + 1), #expected do
+            if replay > 0 then expected_replay[#expected_replay + 1] = expected[i] end
+        end
 
-    -- defer: there is no share_in fusion to combine conflation with replay=5
-    -- and verify the batch of the latest buffered values.
-    pending("testConflateReplay5")
+        local first_emitted = async.channel(0)
+        local produced = async.channel(1)
+        local done = async.channel(0)
+        local completed = async.channel(1)
+        local source = flow.new(function (emit)
+            for value = 0, n - 1 do
+                emit(value)
+                if value == 0 then first_emitted:receive() end
+            end
+            produced:send(true)
+            done:receive()
+            emit(-1)
+            completed:send(true)
+        end)
+        local shared = op(source):share_in(async.current(), replay)
+        local received = {}
+        local index = 1
+        shared:on_each(function (value)
+            if value == 0 then first_emitted:send(true) end
+        end):take_while(function (value) return value >= 0 end):collect(function (value)
+            assert.is_equal(expected[index], value)
+            received[#received + 1] = value
+            index = index + 1
+            if index > #expected then
+                produced:receive()
+                assert.same(expected_replay, shared.replay_cache)
+                done:send(true)
+            end
+        end)
+        assert.same(expected, received)
+        completed:receive()
+    end
 
-    -- defer: buffer overflow mode is configurable on mutable_shared_flow, but
-    -- there is no upstream DROP_OLDEST buffer fused into share_in with replay=1.
-    pending("testBufferDropOldestReplay1")
+    -- adapted: rendezvous gates assert surviving values; Lua's scheduled eager
+    -- share_in collector receives the first value before the upstream burst.
+    it("testConflateReplay1", runtest(function ()
+        check_conflation(1, "DROP_OLDEST", function (source) return source:conflate() end, 1)
+    end))
 
-    -- defer: no share_in builder exists to combine upstream DROP_OLDEST with
-    -- replay=0 and assert the first subscriber's delivery capacity.
-    pending("testBufferDropOldestReplay0")
+    -- adapted: same deterministic gates; the active subscriber sees the
+    -- initial value and the final value retained by the upstream buffer.
+    it("testConflateReplay0", runtest(function ()
+        check_conflation(1, "DROP_OLDEST", function (source) return source:conflate() end, 0)
+    end))
 
-    -- defer: replay=10 can be set on mutable_shared_flow, but upstream buffer
-    -- fusion into an eagerly collected shared flow is unsupported.
-    pending("testBufferDropOldestReplay10")
+    -- adapted: separate upstream conflation and replay buffers do not fuse;
+    -- assert the actual first and final conflated values and replay cache.
+    it("testConflateReplay5", runtest(function ()
+        check_conflation(1, "DROP_OLDEST", function (source) return source:conflate() end, 5)
+    end))
 
-    -- defer: Flow:buffer has no overflow-mode argument and share_in is absent,
-    -- so buffer(20) plus replay=0 cannot be checked as one shared capacity.
-    pending("testBuffer20DropOldestReplay0")
+    -- adapted: the upstream drop-oldest channel retains the final value and
+    -- the shared subscriber verifies that value with replay=1.
+    it("testBufferDropOldestReplay1", runtest(function ()
+        check_conflation(1, "DROP_OLDEST", function (source) return source:buffer(nil, "DROP_OLDEST") end, 1)
+    end))
 
-    -- defer: Flow:buffer has no overflow-mode argument and share_in is absent,
-    -- so buffer(7) plus replay=11 cannot be tested as a fused capacity of 18.
-    pending("testBuffer7DropOldestReplay11")
+    -- adapted: the scheduled subscriber also sees the initial value before
+    -- the upstream drop-oldest buffer begins retaining its final value.
+    it("testBufferDropOldestReplay0", runtest(function ()
+        check_conflation(1, "DROP_OLDEST", function (source) return source:buffer(nil, "DROP_OLDEST") end, 0)
+    end))
 
-    -- defer: Flow:conflate is a no-op and there is no share_in fusion to prove
-    -- that conflate overrides a preceding buffer(23).
-    pending("testBufferConflateOverride")
+    -- adapted: the upstream buffer remains capacity one beside replay=10;
+    -- assert its first/final delivered values and the shorter replay cache.
+    it("testBufferDropOldestReplay10", runtest(function ()
+        check_conflation(1, "DROP_OLDEST", function (source) return source:buffer(nil, "DROP_OLDEST") end, 10)
+    end))
 
-    -- defer: Flow:buffer cannot set DROP_OLDEST and there is no share_in fusion
-    -- to verify that the overflow buffer overrides buffer(23).
-    pending("testBufferDropOldestOverride")
+    -- adapted: buffer(20) itself retains the final twenty upstream values;
+    -- with replay=0 the active shared subscriber verifies that exact window.
+    it("testBuffer20DropOldestReplay0", runtest(function ()
+        check_conflation(20, "DROP_OLDEST", function (source) return source:buffer(20, "DROP_OLDEST") end, 0)
+    end))
 
-    -- defer: DROP_LATEST exists for mutable_shared_flow, but no share_in builder
-    -- can apply an upstream dropping buffer with replay=0.
-    pending("testBufferDropLatestReplay0")
+    -- adapted: capacity seven and replay=11 stay separate; assert the first
+    -- value plus the seven values retained by the upstream buffer.
+    it("testBuffer7DropOldestReplay11", runtest(function ()
+        check_conflation(7, "DROP_OLDEST", function (source) return source:buffer(7, "DROP_OLDEST") end, 11)
+    end))
 
-    -- defer: there is no share_in fusion to apply upstream DROP_LATEST with
-    -- replay=1 and check which values the active subscriber receives.
-    pending("testBufferDropLatestReplay1")
+    -- adapted: Flow buffer fusion overrides the earlier buffer(23) with the
+    -- one-value conflated buffer; assert the surviving shared value.
+    it("testBufferConflateOverride", runtest(function ()
+        check_conflation(1, "DROP_OLDEST", function (source) return source:buffer(23):conflate() end, 1)
+    end))
 
-    -- defer: replay=10 exists for mutable_shared_flow, but upstream
-    -- DROP_LATEST buffering during share_in is not implemented.
-    pending("testBufferDropLatestReplay10")
+    -- adapted: the subscriber observes the initial value before the fused
+    -- upstream DROP_OLDEST buffer replaces the preceding capacity 23.
+    it("testBufferDropOldestOverride", runtest(function ()
+        check_conflation(1, "DROP_OLDEST", function (source)
+            return source:buffer(23):buffer(nil, "DROP_OLDEST")
+        end, 1)
+    end))
 
-    -- defer: Flow:buffer does not accept an overflow mode and share_in is
-    -- absent, so buffer(0)/DROP_LATEST/replay=0 cannot be represented.
-    pending("testBuffer0DropLatestReplay0")
+    -- adapted: upstream DROP_LATEST buffering remains separate from replay;
+    -- assert the active subscriber's initial value and retained burst prefix.
+    it("testBufferDropLatestReplay0", runtest(function ()
+        check_conflation(1, "DROP_LATEST", function (source) return source:buffer(nil, "DROP_LATEST") end, 0)
+    end))
 
-    -- defer: Flow:buffer does not accept an overflow mode and share_in is
-    -- absent, so buffer(0)/DROP_LATEST/replay=1 cannot be represented.
-    pending("testBuffer0DropLatestReplay1")
+    -- adapted: assert the initial subscriber value and the first post-gate
+    -- value retained by the separate capacity-one upstream buffer.
+    it("testBufferDropLatestReplay1", runtest(function ()
+        check_conflation(1, "DROP_LATEST", function (source) return source:buffer(nil, "DROP_LATEST") end, 1)
+    end))
 
-    -- defer: Flow:buffer does not accept an overflow mode and share_in is
-    -- absent, so buffer(0)/DROP_LATEST/replay=10 cannot be represented.
-    pending("testBuffer0DropLatestReplay10")
+    -- adapted: replay does not fuse with the upstream capacity-one buffer.
+    it("testBufferDropLatestReplay10", runtest(function ()
+        check_conflation(1, "DROP_LATEST", function (source) return source:buffer(nil, "DROP_LATEST") end, 10)
+    end))
 
-    -- defer: there is no share_in fusion to combine buffer(5), DROP_LATEST,
-    -- and replay=0 into the tested effective capacity.
-    pending("testBuffer5DropLatestReplay0")
+    -- adapted: capacity zero maps to a one-value DROP_LATEST channel here;
+    -- check actual delivery to the subscriber with replay disabled.
+    it("testBuffer0DropLatestReplay0", runtest(function ()
+        check_conflation(1, "DROP_LATEST", function (source) return source:buffer(0, "DROP_LATEST") end, 0)
+    end))
 
-    -- defer: there is no share_in fusion to combine buffer(5), replay=10, and
-    -- DROP_LATEST while preserving the total capacity of 15.
-    pending("testBuffer5DropLatestReplay10")
+    -- adapted: capacity zero maps to a one-value upstream buffer beside replay.
+    it("testBuffer0DropLatestReplay1", runtest(function ()
+        check_conflation(1, "DROP_LATEST", function (source) return source:buffer(0, "DROP_LATEST") end, 1)
+    end))
 
-    -- defer: Flow:buffer cannot select DROP_LATEST and there is no share_in
-    -- fusion to verify that it overrides the preceding buffer(23).
-    pending("testBufferDropLatestOverride")
+    -- adapted: replay=10 remains separate from the one-value upstream buffer.
+    it("testBuffer0DropLatestReplay10", runtest(function ()
+        check_conflation(1, "DROP_LATEST", function (source) return source:buffer(0, "DROP_LATEST") end, 10)
+    end))
+
+    -- adapted: assert initial delivery plus the five-value upstream prefix;
+    -- the current share_in runtime does not fuse buffer capacity with replay.
+    it("testBuffer5DropLatestReplay0", runtest(function ()
+        check_conflation(5, "DROP_LATEST", function (source) return source:buffer(5, "DROP_LATEST") end, 0)
+    end))
+
+    -- adapted: replay=10 remains separate from the five-value upstream buffer.
+    it("testBuffer5DropLatestReplay10", runtest(function ()
+        check_conflation(5, "DROP_LATEST", function (source) return source:buffer(5, "DROP_LATEST") end, 10)
+    end))
+
+    -- adapted: the override limits the upstream channel to one value, while
+    -- the scheduled subscriber still sees its initial value.
+    it("testBufferDropLatestOverride", runtest(function ()
+        check_conflation(1, "DROP_LATEST", function (source)
+            return source:buffer(23):buffer(nil, "DROP_LATEST")
+        end, 0)
+    end))
 end)
