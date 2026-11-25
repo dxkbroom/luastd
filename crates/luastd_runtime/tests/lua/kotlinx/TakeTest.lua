@@ -21,11 +21,13 @@ describe("TakeTest", function ()
         assert.is_equal(2, flow.from(values):drop(1):take(1):single())
     end))
 
-    -- adapted: Lua take is lazy and treats non-positive counts as an empty
-    -- result; Kotlin throws IllegalArgumentException when constructing it.
+    -- adapted: Kotlin IllegalArgumentException is luastd's InvalidArgument kind.
     it("testIllegalArgument", runtest(function ()
-        assert.same({}, flow.of_one(1):take(0):to_list())
-        assert.same({}, flow.of_one(1):take(-1):to_list())
+        for _, count in ipairs({ 0, -1 }) do
+            local ok, err = pcall(function () flow.of_one(1):take(count) end)
+            assert.is_false(ok)
+            assert.is_equal("InvalidArgument", err.kind)
+        end
     end))
 
     -- adapted: use async.yield in the source body to suspend between emissions;
@@ -49,20 +51,49 @@ describe("TakeTest", function ()
         assert.is_equal(0, #flow.empty():take(10):to_list())
     end))
 
-    -- adapted: verify the current Lua empty-flow behavior for both zero and
-    -- negative counts; Kotlin rejects both values.
+    -- adapted: verify construction-time InvalidArgument for both zero and
+    -- negative counts, matching Kotlin's IllegalArgumentException contract.
     it("testNonPositiveValues", runtest(function ()
-        assert.same({}, flow.of_one(1):take(0):to_list())
-        assert.same({}, flow.of_one(1):take(-1):to_list())
+        for _, count in ipairs({ 0, -1 }) do
+            local ok, err = pcall(function () flow.of_one(1):take(count) end)
+            assert.is_false(ok)
+            assert.is_equal("InvalidArgument", err.kind)
+        end
     end))
 
-    -- defer: Flow collection is synchronous and does not expose kotlinx-style
-    -- child jobs that take can cancel and join on short-circuit.
-    pending("testCancelUpstream")
+    -- adapted: use a structured child completion hook to observe upstream
+    -- cancellation after take emits its first value and short-circuits.
+    it("testCancelUpstream", runtest(function ()
+        local cancelled = false
+        local source = flow.new(function (emit)
+            async.scope(function (scope)
+                local child = scope:launch(function () async.delay(math.huge) end)
+                child:on_cancel(function () cancelled = true end)
+                emit(1)
+            end)
+        end)
+        assert.is_equal(1, source:take(1):single())
+        assert.is_true(cancelled)
+    end))
 
-    -- defer: the flow implementation does not track upstream child lifetime or
-    -- guarantee cancellation cleanup when a downstream map fails.
-    pending("testErrorCancelsUpstream")
+    -- adapted: use a structured child completion hook to verify cleanup when
+    -- a downstream map throws and catch emits the replacement value.
+    it("testErrorCancelsUpstream", runtest(function ()
+        local cancelled = false
+        local failure = luastd_test.TestException()
+        local source = flow.new(function (emit)
+            async.scope(function (scope)
+                local child = scope:launch(function () async.delay(math.huge) end)
+                child:on_cancel(function () cancelled = true end)
+                emit(1)
+            end)
+        end):take(2):map(function () error(failure, 0) end):catch(function (emit, err)
+            assert.is_true(rawequal(failure, err))
+            emit(42)
+        end)
+        assert.is_equal(42, source:single())
+        assert.is_true(cancelled)
+    end))
 
     it("takeWithRetries", runtest(function (t)
         t:expect(1)
