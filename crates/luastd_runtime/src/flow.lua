@@ -7,6 +7,58 @@ local Flow = {}
 Flow.__index = Flow
 
 local BREAK = {}
+local SHARED_NIL = {}
+
+local function encode_shared(value)
+    if value == nil then return SHARED_NIL end
+    return value
+end
+
+local function decode_shared(value)
+    if rawequal(value, SHARED_NIL) then return nil end
+    return value
+end
+
+local function replay_cache(shared)
+    local cache = {}
+    local has_nil = false
+    for i, value in ipairs(shared._replay_buffer) do
+        local decoded = decode_shared(value)
+        if decoded == nil then
+            has_nil = true
+        else
+            cache[i] = decoded
+        end
+    end
+    if has_nil then cache.n = #shared._replay_buffer end
+    return cache
+end
+
+local function shared_index(self, key)
+    local shared = rawget(self, "_shared_state") or rawget(self, "_sf") or self
+    if key == "replay_cache" then return replay_cache(shared) end
+    if key == "subscription_count" then return #shared._subscribers end
+    return Flow[key]
+end
+
+local function remember_replay(shared, value)
+    if shared._replay == 0 then return end
+    table.insert(shared._replay_buffer, value)
+    while #shared._replay_buffer > shared._replay do
+        table.remove(shared._replay_buffer, 1)
+    end
+end
+
+local function has_subscriber(shared, wanted)
+    for _, subscriber in ipairs(shared._subscribers) do
+        if rawequal(subscriber, wanted) then return true end
+    end
+    return false
+end
+
+local function invalid_shared_flow_argument(message)
+    error(async._new_error("InvalidArgument", message), 0)
+end
 
 local function new_flow(run)
     return setmetatable({ _run = run }, Flow)
@@ -288,7 +340,7 @@ end
 function Flow:on_start(fn)
     local up = self
     return new_flow(function (emit)
-        fn()
+        fn(emit)
         up._run(emit)
     end)
 end
@@ -479,6 +531,7 @@ end
 
 function Flow:flow_on(ctx)
     local up = self
+    if up._shared_flow then return up end
     if up._buffer_base then
         local base = new_flow(function (emit)
             async.with_context(ctx, function ()
@@ -495,6 +548,7 @@ function Flow:flow_on(ctx)
 end
 
 function Flow:cancellable()
+    if self._shared_flow then return self end
     if self._cancellable then return self end
     local up = self
     local result = new_flow(function (emit)
@@ -508,6 +562,7 @@ function Flow:cancellable()
 end
 
 function Flow:buffer(cap)
+    if self._shared_flow and cap == 0 then return self end
     local base = self._buffer_base or self
     local previous_capacity = self._buffer_capacity
     local previous_default = self._buffer_default
@@ -808,65 +863,174 @@ end
 
 -- ---------- SharedFlow / StateFlow ----------
 
-local function make_shared_flow(sf)
-    return new_flow(function (emit)
-        local ch = async.channel(sf._replay + sf._extra + 1)
-        for _, v in ipairs(sf._replay_buffer) do
-            ch:send(v)
+local function make_shared_flow(sf, subscription_hooks)
+    local overflow = sf._on_overflow:lower()
+    local capacity = sf._replay + sf._extra
+    local shared = new_flow(function (emit)
+        local ch = async.channel(capacity, overflow)
+        local subscriber = { channel = ch, pending = 0, waiting = false }
+        for _, value in ipairs(sf._replay_buffer) do
+            ch:send(value)
+            subscriber.pending = subscriber.pending + 1
         end
-        table.insert(sf._subscribers, ch)
-        local ok, err = pcall(function ()
-            for v in ch:iter() do
-                emit(v)
+        table.insert(sf._subscribers, subscriber)
+
+        async.finally(function ()
+            local ok, err = pcall(function ()
+                for _, hook in ipairs(subscription_hooks or {}) do
+                    hook(emit)
+                end
+                while true do
+                    subscriber.waiting = true
+                    local value = ch:receive()
+                    subscriber.waiting = false
+                    subscriber.pending = math.max(0, subscriber.pending - 1)
+                    emit(decode_shared(value))
+                end
+            end)
+            if not ok and not rawequal(err, BREAK) then error(err, 0) end
+        end, function ()
+            subscriber.waiting = false
+            for i, current in ipairs(sf._subscribers) do
+                if current == subscriber then
+                    table.remove(sf._subscribers, i)
+                    break
+                end
             end
+            ch:cancel()
         end)
-        -- unregister
-        for i, c in ipairs(sf._subscribers) do
-            if c == ch then
-                table.remove(sf._subscribers, i)
-                break
-            end
-        end
-        if not ok and not rawequal(err, BREAK) then
-            error(err, 0)
-        end
     end)
+    shared._shared_flow = true
+    shared._shared_state = sf
+    shared._subscription_hooks = subscription_hooks or {}
+    setmetatable(shared, { __index = shared_index })
+    return shared
+end
+
+function Flow:on_subscription(action)
+    if not self._shared_flow then
+        error(async._new_error("InvalidArgument", "on_subscription requires a SharedFlow"), 2)
+    end
+    if type(action) ~= "function" then
+        error(async._new_error("InvalidArgument", "on_subscription requires a function"), 2)
+    end
+    local shared_state = rawget(self, "_shared_state") or rawget(self, "_sf") or self
+    local hooks = {}
+    for i, hook in ipairs(rawget(self, "_subscription_hooks") or {}) do
+        hooks[i] = hook
+    end
+    hooks[#hooks + 1] = action
+    return make_shared_flow(shared_state, hooks)
 end
 
 function flow.mutable_shared_flow(replay, extra, on_overflow)
     replay = replay or 0
     extra = extra or 0
+    on_overflow = on_overflow or "SUSPEND"
+    if type(replay) ~= "number" or replay % 1 ~= 0 or replay < 0 then
+        invalid_shared_flow_argument("replay must be a non-negative integer")
+    end
+    if type(extra) ~= "number" or extra % 1 ~= 0 or extra < 0 then
+        invalid_shared_flow_argument("extra_buffer must be a non-negative integer")
+    end
+    if on_overflow ~= "SUSPEND" and on_overflow ~= "DROP_OLDEST" and on_overflow ~= "DROP_LATEST" then
+        invalid_shared_flow_argument("invalid shared flow overflow mode")
+    end
+    if replay + extra == 0 and on_overflow ~= "SUSPEND" then
+        invalid_shared_flow_argument("overflow mode requires a replay or extra buffer")
+    end
+    local capacity = replay + extra
     local sf = {
         _replay = replay,
         _extra = extra,
-        _on_overflow = on_overflow or "SUSPEND",
+        _on_overflow = on_overflow,
         _replay_buffer = {},
         _subscribers = {}
     }
     function sf:emit(value)
-        table.insert(self._replay_buffer, value)
-        while #self._replay_buffer > self._replay do
-            table.remove(self._replay_buffer, 1)
-        end
-        for _, ch in ipairs(self._subscribers) do
-            if self._on_overflow == "DROP_LATEST" then
-                -- best-effort: try send, drop if full
-                local ok = pcall(function () ch:send(value) end)
-                if not ok then end
-            else
-                ch:send(value)
+        if capacity == 0 and self._on_overflow == "SUSPEND" then
+            local subscribers = {}
+            for i, subscriber in ipairs(self._subscribers) do
+                subscribers[i] = subscriber
             end
+            if #subscribers == 0 then
+                remember_replay(self, encode_shared(value))
+                return
+            end
+
+            local encoded = encode_shared(value)
+            for _, subscriber in ipairs(subscribers) do
+                while has_subscriber(self, subscriber) do
+                    if subscriber.waiting then
+                        subscriber.pending = subscriber.pending + 1
+                        if subscriber.channel:try_send(encoded) then break end
+                        subscriber.pending = subscriber.pending - 1
+                    end
+                    async.yield()
+                end
+            end
+            while true do
+                local pending = false
+                for _, subscriber in ipairs(subscribers) do
+                    pending = pending or (has_subscriber(self, subscriber) and subscriber.pending > 0)
+                end
+                if not pending then break end
+                async.yield()
+            end
+            remember_replay(self, encoded)
+            return
+        end
+        while true do
+            if self:try_emit(value) then
+                return
+            end
+            async.yield()
         end
     end
     function sf:try_emit(value)
-        -- returns true if emitted without suspension
-        local ok = pcall(function () self:emit(value) end)
-        return ok
+        local subscribers = self._subscribers
+        local count = #subscribers
+        local encoded = encode_shared(value)
+        if count == 0 then
+            remember_replay(self, encoded)
+            return true
+        end
+        -- A rendezvous emission cannot be represented by the non-suspending
+        -- try_emit operation, even if collectors are currently waiting.
+        if capacity == 0 and self._on_overflow == "SUSPEND" then return false end
+
+        local overflowed = false
+        for _, subscriber in ipairs(subscribers) do
+            local full
+            if capacity == 0 then
+                full = not subscriber.waiting
+            else
+                full = subscriber.pending >= capacity
+            end
+            if full then
+                overflowed = true
+                if self._on_overflow == "SUSPEND" then return false end
+                if self._on_overflow == "DROP_LATEST" then return true end
+            end
+        end
+
+        for _, subscriber in ipairs(subscribers) do
+            subscriber.channel:try_send(encoded)
+            if not (overflowed and self._on_overflow == "DROP_OLDEST") then
+                subscriber.pending = subscriber.pending + 1
+            end
+        end
+        remember_replay(self, encoded)
+        return true
+    end
+    function sf:reset_replay_cache()
+        self._replay_buffer = {}
     end
     local f = make_shared_flow(sf)
     sf._flow = f
     sf._run = f._run
-    setmetatable(sf, { __index = Flow })
+    sf._shared_flow = true
+    setmetatable(sf, { __index = shared_index })
     sf.as_shared_flow = function () return f end
     return sf
 end
@@ -874,7 +1038,7 @@ end
 function flow.mutable_state_flow(initial)
     local sf = flow.mutable_shared_flow(1, 0, "DROP_OLDEST")
     -- seed replay buffer
-    sf._replay_buffer = { initial }
+    sf._replay_buffer = { encode_shared(initial) }
     local state = { _sf = sf, _value = initial, value = initial }
     function state:get_value()
         return self.value
@@ -882,9 +1046,10 @@ function flow.mutable_state_flow(initial)
     function state:set_value(v)
         self.value = v
         self._value = v
-        sf._replay_buffer = { v }
-        for _, ch in ipairs(sf._subscribers) do
-            pcall(function () ch:send(v) end)
+        sf._replay_buffer = { encode_shared(v) }
+        for _, subscriber in ipairs(sf._subscribers) do
+            subscriber.channel:try_send(encode_shared(v))
+            subscriber.pending = math.min(1, subscriber.pending + 1)
         end
     end
     function state:update(fn)
@@ -900,7 +1065,8 @@ function flow.mutable_state_flow(initial)
     -- make it a Flow
     state._flow = make_shared_flow(sf)
     state._run = state._flow._run
-    setmetatable(state, { __index = Flow })
+    state._shared_flow = true
+    setmetatable(state, { __index = shared_index })
     return state
 end
 

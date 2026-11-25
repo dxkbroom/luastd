@@ -64,6 +64,8 @@ local function xpcall(f, handler, ...)
 end
 
 local async = {}
+-- Internal constructor shared with other runtime Lua modules.
+async._new_error = new_error
 
 -- Jobs own lifetime; scopes expose a context and launch child jobs.
 local Job = {}

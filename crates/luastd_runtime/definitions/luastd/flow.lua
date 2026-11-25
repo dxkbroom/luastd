@@ -367,6 +367,14 @@ function Flow:merge(other) end
 ---@class luastd.flow.SharedFlow<T = any>: luastd.flow.Flow<T>
 local SharedFlow = {}
 
+--- Snapshot of the current replay buffer. `n` preserves its size when values are `nil`.
+---@type table<integer, T>
+SharedFlow.replay_cache = {}
+
+--- Number of active collectors.
+---@type integer
+SharedFlow.subscription_count = 0
+
 --- Emit a value to all subscribers.
 ---@param value T
 function SharedFlow:emit(value) end
@@ -375,6 +383,14 @@ function SharedFlow:emit(value) end
 ---@param value T
 ---@return boolean
 function SharedFlow:try_emit(value) end
+
+--- Clear values available to future subscribers without changing active collectors.
+function SharedFlow:reset_replay_cache() end
+
+--- Run `action` after a collector subscribes and before replayed values are delivered.
+---@param action fun(emit: fun(value: T))
+---@return luastd.flow.SharedFlow<T>
+function SharedFlow:on_subscription(action) end
 
 --- The underlying flow (for chaining).
 ---@return luastd.flow.Flow<T>

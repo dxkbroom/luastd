@@ -24,11 +24,17 @@ describe("SharedFlowTest", function ()
                 t:expect(3)
                 shared:collect(function (value)
                     table.insert(first, value)
-                    if value == 4 then t:expect(5)
-                    elseif value == 6 then t:expect(7)
-                    elseif value == 10 then t:expect(11)
-                    elseif value == 13 then t:expect(14)
-                    else t:expect_unreached() end
+                    if value == 4 then
+                        t:expect(5)
+                    elseif value == 6 then
+                        t:expect(7)
+                    elseif value == 10 then
+                        t:expect(11)
+                    elseif value == 13 then
+                        t:expect(14)
+                    else
+                        t:expect_unreached()
+                    end
                 end)
             end)
             async.yield()
@@ -53,11 +59,17 @@ describe("SharedFlowTest", function ()
                     else
                         table.insert(second, value)
                     end
-                    if value == 10 then t:expect(12)
-                    elseif value == 13 then t:expect(15)
-                    elseif value == 17 then t:expect(18)
-                    elseif value == 21 then t:expect(22)
-                    elseif value ~= nil then t:expect_unreached() end
+                    if value == 10 then
+                        t:expect(12)
+                    elseif value == 13 then
+                        t:expect(15)
+                    elseif value == 17 then
+                        t:expect(18)
+                    elseif value == 21 then
+                        t:expect(22)
+                    elseif value ~= nil then
+                        t:expect_unreached()
+                    end
                 end)
             end)
             async.yield()
@@ -172,13 +184,18 @@ describe("SharedFlowTest", function ()
                 t:expect(4)
                 shared:collect(function (value)
                     table.insert(first, value)
-                    if value == 2 then t:expect(5)
-                    elseif value == 6 then t:expect(8)
+                    if value == 2 then
+                        t:expect(5)
+                    elseif value == 6 then
+                        t:expect(8)
                     elseif value == nil then
                         first_null = true
                         t:expect(14)
-                    elseif value == 17 then t:expect(18)
-                    else t:expect_unreached() end
+                    elseif value == 17 then
+                        t:expect(18)
+                    else
+                        t:expect_unreached()
+                    end
                 end)
             end)
             async.yield()
@@ -192,10 +209,18 @@ describe("SharedFlowTest", function ()
             local second_job = async.launch(function ()
                 t:expect(10)
                 shared:collect(function (value)
-                    if value == nil then second_null = true else table.insert(second, value) end
-                    if value == 6 then t:expect(11)
-                    elseif value == nil then t:expect(15)
-                    else t:expect_unreached() end
+                    if value == nil then
+                        second_null = true
+                    else
+                        table.insert(second, value)
+                    end
+                    if value == 6 then
+                        t:expect(11)
+                    elseif value == nil then
+                        t:expect(15)
+                    else
+                        t:expect_unreached()
+                    end
                 end)
             end)
             async.yield()
@@ -311,16 +336,28 @@ describe("SharedFlowTest", function ()
                     table.insert(received, value)
                     if value == 0 then
                         zero_count = zero_count + 1
-                        if zero_count == 1 then t:expect(3)
-                        elseif zero_count == 2 then t:expect(14)
-                        else t:expect_unreached() end
-                    elseif value == 1 then t:expect(6)
-                    elseif value == 2 then t:expect(7)
-                    elseif value == 3 then t:expect(8)
-                    elseif value == 4 then t:expect(12)
-                    elseif value == 5 then t:expect(13)
-                    elseif value == 16 then t:expect(17)
-                    else t:expect_unreached() end
+                        if zero_count == 1 then
+                            t:expect(3)
+                        elseif zero_count == 2 then
+                            t:expect(14)
+                        else
+                            t:expect_unreached()
+                        end
+                    elseif value == 1 then
+                        t:expect(6)
+                    elseif value == 2 then
+                        t:expect(7)
+                    elseif value == 3 then
+                        t:expect(8)
+                    elseif value == 4 then
+                        t:expect(12)
+                    elseif value == 5 then
+                        t:expect(13)
+                    elseif value == 16 then
+                        t:expect(17)
+                    else
+                        t:expect_unreached()
+                    end
                 end)
             end)
             async.yield()
@@ -367,141 +404,267 @@ describe("SharedFlowTest", function ()
 
     -- adapted: wait for the public subscription count instead of using the
     -- absent onSubscription callback as the collector-start barrier.
-    it("testBufferNoReplayCancelWhileBuffering", runtest(function ()
-        local n = 123
-        local m = math.floor(n / 2)
-        local shared = flow.mutable_shared_flow(0, n)
-        for _ = 1, 3 do
-            local barrier = async.channel(1)
-            local collector = async.launch(function ()
+    it(
+        "testBufferNoReplayCancelWhileBuffering",
+        runtest(function ()
+            local n = 123
+            local m = math.floor(n / 2)
+            local shared = flow.mutable_shared_flow(0, n)
+            for _ = 1, 3 do
+                local barrier = async.channel(1)
+                local collector = async.launch(function ()
+                    shared:collect(function (value)
+                        if value == m then
+                            barrier:send(2)
+                            async.delay(math.huge)
+                        end
+                    end)
+                end)
+                while shared.subscription_count == 0 do
+                    async.yield()
+                end
+                local emitter = async.launch(function ()
+                    for value = 0, n + m - 1 do
+                        shared:emit(value)
+                    end
+                    barrier:send(3)
+                    shared:emit(n + 4)
+                    barrier:send(4)
+                end)
+                assert.is_equal(2, barrier:receive())
+                assert.is_equal(3, barrier:receive())
+                collector:cancel()
+                assert.is_equal(4, barrier:receive())
+                async.join(emitter)
+                async.yield()
+                assert.is_equal(0, shared.subscription_count)
+            end
+        end)
+    )
+
+    it(
+        "testRepeatedResetWithReplay",
+        runtest(function ()
+            local n = 10
+            local shared = flow.mutable_shared_flow(n)
+            local next_value = 1
+            for _ = 1, 3 do
+                local collector = async.launch(function ()
+                    shared:collect(function () async.delay(math.huge) end)
+                end)
+                while shared.subscription_count == 0 do
+                    async.yield()
+                end
+                local emitter = async.launch(function ()
+                    for _ = 1, 3 * n do
+                        shared:emit(next_value)
+                        next_value = next_value + 1
+                    end
+                end)
+                for _ = 1, 3 do
+                    async.yield()
+                end
+                local last = next_value - 1
+                local expected = {}
+                for value = last - n + 1, last do
+                    table.insert(expected, value)
+                end
+                assert.same(expected, shared.replay_cache)
+                shared:reset_replay_cache()
+                assert.same({}, shared.replay_cache)
+                for _ = 1, 3 do
+                    async.yield()
+                end
+                assert.same({}, shared.replay_cache)
+                collector:cancel()
+                emitter:cancel()
+                async.yield()
+                assert.is_equal(0, shared.subscription_count)
+            end
+        end)
+    )
+
+    it(
+        "testSynchronousSharedFlowEmitterCancel",
+        runtest(function (t)
+            local shared = flow.mutable_shared_flow()
+            local barrier1, barrier2, barrier3 = async.channel(1), async.channel(1), async.channel(1)
+            t:expect(1)
+            local fast = async.launch(function ()
                 shared:collect(function (value)
-                    if value == m then
-                        barrier:send(2)
-                        async.delay(math.huge)
+                    if value == 1 then
+                        t:expect(3)
+                    elseif value == 2 then
+                        t:expect(6)
+                        barrier2:send(true)
+                    elseif value == 3 then
+                        t:expect(9)
+                        barrier3:send(true)
+                    else
+                        t:expect_unreached()
                     end
                 end)
             end)
-            while shared.subscription_count == 0 do async.yield() end
-            local emitter = async.launch(function ()
-                for value = 0, n + m - 1 do shared:emit(value) end
-                barrier:send(3)
-                shared:emit(n + 4)
-                barrier:send(4)
+            local slow = async.launch(function ()
+                shared:collect(function (value)
+                    if value == 1 then
+                        t:expect(4)
+                        barrier1:send(true)
+                        async.delay(math.huge)
+                    else
+                        t:expect_unreached()
+                    end
+                end)
             end)
-            assert.is_equal(2, barrier:receive())
-            assert.is_equal(3, barrier:receive())
-            collector:cancel()
-            assert.is_equal(4, barrier:receive())
-            async.join(emitter)
             async.yield()
-            assert.is_equal(0, shared.subscription_count)
-        end
-    end))
-
-    it("testRepeatedResetWithReplay", runtest(function ()
-        local n = 10
-        local shared = flow.mutable_shared_flow(n)
-        local next_value = 1
-        for _ = 1, 3 do
-            local collector = async.launch(function ()
-                shared:collect(function () async.delay(math.huge) end)
-            end)
-            while shared.subscription_count == 0 do async.yield() end
+            async.yield()
             local emitter = async.launch(function ()
-                for _ = 1, 3 * n do
-                    shared:emit(next_value)
-                    next_value = next_value + 1
-                end
+                t:expect(2)
+                shared:emit(1)
+                barrier1:receive()
+                t:expect(5)
+                shared:emit(2)
+                t:expect_unreached()
             end)
-            for _ = 1, 3 do async.yield() end
-            local last = next_value - 1
-            local expected = {}
-            for value = last - n + 1, last do table.insert(expected, value) end
-            assert.same(expected, shared.replay_cache)
-            shared:reset_replay_cache()
-            assert.same({}, shared.replay_cache)
-            for _ = 1, 3 do async.yield() end
-            assert.same({}, shared.replay_cache)
-            collector:cancel()
+            barrier2:receive()
+            t:expect(7)
             emitter:cancel()
             async.yield()
-            assert.is_equal(0, shared.subscription_count)
-        end
-    end))
-
-    it("testSynchronousSharedFlowEmitterCancel", runtest(function (t)
-        local shared = flow.mutable_shared_flow()
-        local barrier1, barrier2, barrier3 = async.channel(1), async.channel(1), async.channel(1)
-        t:expect(1)
-        local fast = async.launch(function ()
-            shared:collect(function (value)
-                if value == 1 then
-                    t:expect(3)
-                elseif value == 2 then
-                    t:expect(6)
-                    barrier2:send(true)
-                elseif value == 3 then
-                    t:expect(9)
-                    barrier3:send(true)
-                else
-                    t:expect_unreached()
-                end
-            end)
+            slow:cancel()
+            async.yield()
+            t:expect(8)
+            shared:emit(3)
+            barrier3:receive()
+            t:expect(10)
+            fast:cancel()
+            async.yield()
+            t:finish(11)
         end)
-        local slow = async.launch(function ()
-            shared:collect(function (value)
-                if value == 1 then
-                    t:expect(4)
-                    barrier1:send(true)
-                    async.delay(math.huge)
-                else
-                    t:expect_unreached()
-                end
-            end)
-        end)
-        async.yield()
-        async.yield()
-        local emitter = async.launch(function ()
-            t:expect(2)
-            shared:emit(1)
-            barrier1:receive()
-            t:expect(5)
-            shared:emit(2)
-            t:expect_unreached()
-        end)
-        barrier2:receive()
-        t:expect(7)
-        emitter:cancel()
-        async.yield()
-        slow:cancel()
-        async.yield()
-        t:expect(8)
-        shared:emit(3)
-        barrier3:receive()
-        t:expect(10)
-        fast:cancel()
-        async.yield()
-        t:finish(11)
-    end))
+    )
 
     -- defer: the test sweeps replay/buffer capacity combinations and checks
     -- replayCache plus tryEmit suspension; those semantics are not implemented.
     pending("testDifferentBufferedFlowCapacities")
 
-    -- defer: DROP_LATEST currently has best-effort channel sends and does not
-    -- preserve the shared flow's replay/buffer semantics under overflow.
-    pending("testDropLatest")
+    local function drop_overflow_test(mode, value_after_overflow)
+        return runtest(function (t)
+            t:expect(1)
+            local shared = flow.mutable_shared_flow(1, 0, mode)
+            shared:emit(1)
+            shared:emit(2)
+            assert.same({ 2 }, shared.replay_cache)
+            assert.is_equal(0, shared.subscription_count)
+            local processed = async.channel(1)
+            local received = {}
+            local collector = async.launch(function ()
+                t:expect(2)
+                shared:collect(function (value)
+                    table.insert(received, value)
+                    if value == 2 then
+                        t:expect(3)
+                        async.yield()
+                    elseif value == value_after_overflow then
+                        t:expect(7)
+                        processed:send(true)
+                    elseif value == 8 then
+                        t:expect(9)
+                        processed:send(true)
+                    else
+                        t:expect_unreached()
+                    end
+                end)
+            end)
+            async.yield()
+            t:expect(4)
+            assert.is_equal(1, shared.subscription_count)
+            assert.same({ 2 }, shared.replay_cache)
+            shared:emit(4)
+            assert.same({ 4 }, shared.replay_cache)
+            t:expect(5)
+            shared:emit(5)
+            assert.same({ value_after_overflow }, shared.replay_cache)
+            t:expect(6)
+            async.yield()
+            processed:receive()
+            t:expect(8)
+            shared:emit(8)
+            assert.same({ 8 }, shared.replay_cache)
+            async.yield()
+            processed:receive()
+            t:expect(10)
+            collector:cancel()
+            async.yield()
+            assert.is_equal(0, shared.subscription_count)
+            assert.same({ 2, value_after_overflow, 8 }, received)
+            t:finish(11)
+        end)
+    end
 
-    -- defer: DROP_OLDEST cannot be verified with the current shared buffer;
-    -- slow subscribers and replay state do not follow Kotlin overflow semantics.
-    pending("testDropOldest")
+    -- adapted: CoroutineStart.UNDISPATCHED is absent; schedule the collector
+    -- and synchronize on each callback while preserving DROP_LATEST behavior.
+    it("testDropLatest", drop_overflow_test("DROP_LATEST", 4))
 
-    -- defer: Flow has no on_subscription operator to order collector-side
-    -- emissions before upstream values arrive.
-    pending("testOnSubscription")
+    -- adapted: as above, use scheduler barriers while verifying that
+    -- DROP_OLDEST replaces the value queued for the slow collector.
+    it("testDropOldest", drop_overflow_test("DROP_OLDEST", 5))
 
-    -- defer: Flow has no on_subscription operator; this test also verifies
-    -- subscriber cleanup when that callback throws.
+    -- adapted: the scheduler has no undispatched launch; pre-subscription
+    -- sends are explicitly dropped while subscription callbacks keep order.
+    it(
+        "testOnSubscription",
+        runtest(function (t)
+            t:expect(1)
+            local shared = flow.mutable_shared_flow()
+            local subscribed = false
+            local function share(value)
+                if subscribed then async.launch(function () shared:emit(value) end) end
+            end
+            local job = async.launch(function ()
+                shared
+                    :on_subscription(function (emit)
+                        subscribed = true
+                        emit("collector->A")
+                        share("share->A")
+                    end)
+                    :on_subscription(function (emit)
+                        emit("collector->B")
+                        share("share->B")
+                    end)
+                    :on_start(function (emit)
+                        emit("collector->C")
+                        share("share->C")
+                    end)
+                    :on_start(function (emit)
+                        emit("collector->D")
+                        share("share->D")
+                    end)
+                    :on_each(function (value)
+                        if value == "collector->D" then
+                            t:expect(2)
+                        elseif value == "collector->C" then
+                            t:expect(3)
+                        elseif value == "collector->A" then
+                            t:expect(4)
+                        elseif value == "collector->B" then
+                            t:expect(5)
+                        elseif value == "share->A" then
+                            t:expect(6)
+                        elseif value == "share->B" then
+                            t:expect(7)
+                            async.current_context():job():cancel()
+                        else
+                            t:expect_unreached()
+                        end
+                    end)
+                    :collect(function () end)
+            end)
+            async.join(job)
+            t:finish(8)
+        end)
+    )
+
+    -- defer: a structured TestException raised by on_subscription currently
+    -- reaches Flow:catch as a string, so the API loses luastd.Error identity.
     pending("onSubscriptionThrows")
 
     -- defer: Flow has no on_subscription barrier, and SharedFlow exposes no
@@ -516,98 +679,120 @@ describe("SharedFlowTest", function ()
     -- replay and drop-oldest conflation, which Lua nil cannot represent here.
     pending("testStateFlowModel")
 
-    it("testOperatorFusion", runtest(function ()
-        local shared = flow.mutable_shared_flow()
-        local context = async.context(async.coroutine_name("unused"))
-        assert.is_true(rawequal(shared, shared:cancellable()))
-        assert.is_true(rawequal(shared, shared:flow_on(context)))
-        assert.is_true(rawequal(shared, shared:buffer(0)))
-    end))
-
-    it("testIllegalArgumentException", runtest(function ()
-        local invalid = {
-            function () flow.mutable_shared_flow(-1) end,
-            function () flow.mutable_shared_flow(0, -1) end,
-            function () flow.mutable_shared_flow(0, 0, "DROP_LATEST") end,
-            function () flow.mutable_shared_flow(0, 0, "DROP_OLDEST") end
-        }
-        for _, construct in ipairs(invalid) do
-            local ok, err = pcall(construct)
-            assert.is_false(ok)
-            assert.is_equal("InvalidArgument", err.kind)
-        end
-    end))
-
-    it("testReplayCancellability", runtest(function (t)
-        local shared = flow.mutable_shared_flow(5)
-        local received = {}
-        t:expect(1)
-        for value = 1, 5 do assert.is_true(shared:try_emit(value)) end
-        local collector = async.launch(function ()
-            shared:collect(function (value)
-                table.insert(received, value)
-                if value == 1 then t:expect(2)
-                elseif value == 2 then t:expect(3)
-                elseif value == 3 then
-                    t:expect(4)
-                    async.current_context():job():cancel()
-                else
-                    t:expect_unreached()
-                end
-            end)
+    it(
+        "testOperatorFusion",
+        runtest(function ()
+            local shared = flow.mutable_shared_flow()
+            local context = async.context(async.coroutine_name("unused"))
+            assert.is_true(rawequal(shared, shared:cancellable()))
+            assert.is_true(rawequal(shared, shared:flow_on(context)))
+            assert.is_true(rawequal(shared, shared:buffer(0)))
         end)
-        async.yield()
-        async.join(collector)
-        assert.is_equal(0, shared.subscription_count)
-        assert.same({ 1, 2, 3 }, received)
-        t:finish(5)
-    end))
+    )
 
-    it("testEmitCancellability", runtest(function (t)
-        local shared = flow.mutable_shared_flow(5)
-        local received = {}
-        t:expect(1)
-        local collector = async.launch(function ()
-            shared:collect(function (value)
-                table.insert(received, value)
-                if value == 1 then t:expect(2)
-                elseif value == 2 then t:expect(3)
-                elseif value == 3 then
-                    t:expect(4)
-                    async.current_context():job():cancel()
-                else
-                    t:expect_unreached()
-                end
-            end)
+    it(
+        "testIllegalArgumentException",
+        runtest(function ()
+            local invalid = {
+                function () flow.mutable_shared_flow(-1) end, function () flow.mutable_shared_flow(0, -1) end,
+                function () flow.mutable_shared_flow(0, 0, "DROP_LATEST") end,
+                function () flow.mutable_shared_flow(0, 0, "DROP_OLDEST") end
+            }
+            for _, construct in ipairs(invalid) do
+                local ok, err = pcall(construct)
+                assert.is_false(ok)
+                assert.is_equal("InvalidArgument", err.kind)
+            end
         end)
-        async.yield()
-        assert.is_equal(1, shared.subscription_count)
-        for value = 1, 5 do assert.is_true(shared:try_emit(value)) end
-        async.join(collector)
-        assert.is_equal(0, shared.subscription_count)
-        assert.same({ 1, 2, 3 }, received)
-        t:finish(5)
-    end))
+    )
 
-    it("testSubscriptionCount", runtest(function ()
-        local shared = flow.mutable_shared_flow()
-        assert.is_equal(0, shared.subscription_count)
-        local function subscribe()
-            return async.launch(function () shared:collect(function () end) end)
-        end
-        local first = subscribe()
-        async.yield()
-        assert.is_equal(1, shared.subscription_count)
-        local second = subscribe()
-        async.yield()
-        assert.is_equal(2, shared.subscription_count)
-        first:cancel()
-        async.yield()
-        assert.is_equal(1, shared.subscription_count)
-        second:cancel()
-        async.yield()
-        assert.is_equal(0, shared.subscription_count)
-    end))
+    it(
+        "testReplayCancellability",
+        runtest(function (t)
+            local shared = flow.mutable_shared_flow(5)
+            local received = {}
+            t:expect(1)
+            for value = 1, 5 do
+                assert.is_true(shared:try_emit(value))
+            end
+            local collector = async.launch(function ()
+                shared:collect(function (value)
+                    table.insert(received, value)
+                    if value == 1 then
+                        t:expect(2)
+                    elseif value == 2 then
+                        t:expect(3)
+                    elseif value == 3 then
+                        t:expect(4)
+                        async.current_context():job():cancel()
+                    else
+                        t:expect_unreached()
+                    end
+                end)
+            end)
+            async.yield()
+            async.join(collector)
+            assert.is_equal(0, shared.subscription_count)
+            assert.same({ 1, 2, 3 }, received)
+            t:finish(5)
+        end)
+    )
+
+    it(
+        "testEmitCancellability",
+        runtest(function (t)
+            local shared = flow.mutable_shared_flow(5)
+            local received = {}
+            t:expect(1)
+            local collector = async.launch(function ()
+                shared:collect(function (value)
+                    table.insert(received, value)
+                    if value == 1 then
+                        t:expect(2)
+                    elseif value == 2 then
+                        t:expect(3)
+                    elseif value == 3 then
+                        t:expect(4)
+                        async.current_context():job():cancel()
+                    else
+                        t:expect_unreached()
+                    end
+                end)
+            end)
+            async.yield()
+            assert.is_equal(1, shared.subscription_count)
+            for value = 1, 5 do
+                assert.is_true(shared:try_emit(value))
+            end
+            async.join(collector)
+            assert.is_equal(0, shared.subscription_count)
+            assert.same({ 1, 2, 3 }, received)
+            t:finish(5)
+        end)
+    )
+
+    it(
+        "testSubscriptionCount",
+        runtest(function ()
+            local shared = flow.mutable_shared_flow()
+            assert.is_equal(0, shared.subscription_count)
+            local function subscribe()
+                return async.launch(function () shared:collect(function () end) end)
+            end
+            local first = subscribe()
+            async.yield()
+            assert.is_equal(1, shared.subscription_count)
+            local second = subscribe()
+            async.yield()
+            assert.is_equal(2, shared.subscription_count)
+            first:cancel()
+            async.yield()
+            assert.is_equal(1, shared.subscription_count)
+            second:cancel()
+            async.yield()
+            assert.is_equal(0, shared.subscription_count)
+        end)
+    )
 
     -- adapted: CoroutineStart.UNDISPATCHED is absent; schedule the collector
     -- and yield until it is waiting before emitting the first value.
@@ -632,22 +817,27 @@ describe("SharedFlowTest", function ()
 
     -- adapted: the runtime test timeout bounds the wait instead of wrapping it
     -- in Kotlin's withTimeoutOrNull helper.
-    it("testCancellingSubscriberAndEmitterWithNoBuffer", runtest(function ()
-        local shared = flow.mutable_shared_flow()
-        for _ = 1, 10 do
-            local value_received = async.channel(1)
-            local collector = async.launch(function ()
-                shared:collect(function (value) value_received:send(value) end)
-            end)
-            local emitter = async.launch(function ()
-                while true do shared:emit(true) end
-            end)
-            assert.is_true(value_received:receive())
-            collector:cancel()
-            emitter:cancel()
-            async.join(collector)
-            async.join(emitter)
-        end
-        assert.is_equal(0, shared.subscription_count)
-    end))
+    it(
+        "testCancellingSubscriberAndEmitterWithNoBuffer",
+        runtest(function ()
+            local shared = flow.mutable_shared_flow()
+            for _ = 1, 10 do
+                local value_received = async.channel(1)
+                local collector = async.launch(function ()
+                    shared:collect(function (value) value_received:send(value) end)
+                end)
+                local emitter = async.launch(function ()
+                    while true do
+                        shared:emit(true)
+                    end
+                end)
+                assert.is_true(value_received:receive())
+                collector:cancel()
+                emitter:cancel()
+                async.join(collector)
+                async.join(emitter)
+            end
+            assert.is_equal(0, shared.subscription_count)
+        end)
+    )
 end)
