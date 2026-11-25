@@ -1224,5 +1224,123 @@ function Flow:state_in(scope, ...)
     return readonly_state_flow(result.state)
 end
 
+local SharingStarted = {}
+SharingStarted.__index = SharingStarted
+SharingStarted.__eq = function (a, b)
+    return getmetatable(a) == SharingStarted and getmetatable(b) == SharingStarted and a.kind == b.kind
+        and a.stop_timeout_ms == b.stop_timeout_ms and a.replay_expiration_ms == b.replay_expiration_ms
+end
+
+local function check_sharing_delay(value, name, allow_infinite)
+    if type(value) ~= "number" or value ~= value or value < 0 or (value ~= math.huge and value % 1 ~= 0)
+        or (not allow_infinite and value == math.huge) then
+        error(async._new_error("InvalidArgument", name .. " must be a non-negative integer"), 3)
+    end
+end
+
+function SharingStarted:command(subscription_count)
+    if type(subscription_count) ~= "table" or type(subscription_count._run) ~= "function"
+        or type(subscription_count.value) ~= "number" then
+        error(async._new_error("InvalidArgument", "command requires a numeric StateFlow"), 2)
+    end
+    local policy = self
+    return new_flow(function (emit)
+        if policy.kind == "eagerly" then
+            emit("START")
+            return
+        end
+        if policy.kind == "lazily" then
+            local started = false
+            subscription_count._run(function (count)
+                if not started and count > 0 then
+                    started = true
+                    emit("START")
+                end
+            end)
+            return
+        end
+
+        async.scope(function (scope)
+            local events = async.channel(16)
+            scope:launch(function ()
+                subscription_count._run(function (count) events:send({ kind = "count", value = count }) end)
+            end)
+
+            local previous_count
+            local started = false
+            local stop_timer
+            local reset_timer
+            local function cancel_timer(timer)
+                if timer then timer:cancel() end
+            end
+            local function schedule(delay, event_kind, token)
+                return scope:launch(function ()
+                    async.delay(delay)
+                    events:send({ kind = event_kind, token = token })
+                end)
+            end
+            local epoch = 0
+
+            for event in events:iter() do
+                if event.kind == "count" then
+                    local count = event.value
+                    if count ~= previous_count then
+                        previous_count = count
+                        if count > 0 then
+                            epoch = epoch + 1
+                            cancel_timer(stop_timer)
+                            cancel_timer(reset_timer)
+                            stop_timer = nil
+                            reset_timer = nil
+                            if not started then
+                                started = true
+                                emit("START")
+                            end
+                        elseif started and not stop_timer then
+                            epoch = epoch + 1
+                            local current_epoch = epoch
+                            if policy.stop_timeout_ms == 0 then
+                                events:send({ kind = "stop", token = current_epoch })
+                            else
+                                stop_timer = schedule(policy.stop_timeout_ms, "stop", current_epoch)
+                            end
+                        end
+                    end
+                elseif event.kind == "stop" and event.token == epoch and started then
+                    stop_timer = nil
+                    started = false
+                    if policy.replay_expiration_ms == 0 then
+                        emit("STOP_AND_RESET_REPLAY_CACHE")
+                    else
+                        emit("STOP")
+                        if policy.replay_expiration_ms ~= math.huge then
+                            reset_timer = schedule(policy.replay_expiration_ms, "reset", epoch)
+                        end
+                    end
+                elseif event.kind == "reset" and event.token == epoch and not started then
+                    reset_timer = nil
+                    emit("STOP_AND_RESET_REPLAY_CACHE")
+                end
+            end
+        end)
+    end)
+end
+
+flow.sharing_started = {
+    eagerly = function () return setmetatable({ kind = "eagerly" }, SharingStarted) end,
+    lazily = function () return setmetatable({ kind = "lazily" }, SharingStarted) end,
+    while_subscribed = function (stop_timeout_ms, replay_expiration_ms)
+        stop_timeout_ms = stop_timeout_ms or 0
+        replay_expiration_ms = replay_expiration_ms == nil and math.huge or replay_expiration_ms
+        check_sharing_delay(stop_timeout_ms, "stop_timeout_ms", false)
+        check_sharing_delay(replay_expiration_ms, "replay_expiration_ms", true)
+        return setmetatable({
+            kind = "while_subscribed",
+            stop_timeout_ms = stop_timeout_ms,
+            replay_expiration_ms = replay_expiration_ms
+        }, SharingStarted)
+    end
+}
+
 flow.Flow = Flow
 return flow, Flow

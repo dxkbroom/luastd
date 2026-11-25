@@ -31,6 +31,39 @@ function flow.empty() end
 ---@return luastd.flow.Flow<T>
 function flow.of_one(value) end
 
+---@alias luastd.flow.SharingCommand "START" | "STOP" | "STOP_AND_RESET_REPLAY_CACHE"
+
+--- A policy that maps a subscription-count StateFlow to sharing commands.
+---@class luastd.flow.SharingStarted
+---@field kind                 "eagerly" | "lazily" | "while_subscribed"
+---@field stop_timeout_ms      integer?
+---@field replay_expiration_ms integer?
+---@operator eq(luastd.flow.SharingStarted): boolean
+local SharingStarted = {}
+
+---@param subscription_count luastd.flow.StateFlow<integer>
+---@return luastd.flow.Flow<luastd.flow.SharingCommand>
+function SharingStarted:command(subscription_count) end
+
+--- Constructors for built-in sharing policies. `while_subscribed` defaults to
+--- an immediate stop and an infinite replay-cache expiration.
+---@class luastd.flow.SharingStartedFactory
+local sharing_started = {}
+
+---@return luastd.flow.SharingStarted
+function sharing_started.eagerly() end
+
+---@return luastd.flow.SharingStarted
+function sharing_started.lazily() end
+
+---@param stop_timeout_ms?      integer
+---@param replay_expiration_ms? integer
+---@return luastd.flow.SharingStarted
+function sharing_started.while_subscribed(stop_timeout_ms, replay_expiration_ms) end
+
+---@type luastd.flow.SharingStartedFactory
+flow.sharing_started = sharing_started
+
 --- Collect every value, calling `fn` for each.
 ---@async
 ---@param fn fun(value: T)
