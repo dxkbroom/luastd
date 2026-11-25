@@ -2,7 +2,7 @@
 
 --- Cold flows: lazily-computed asynchronous streams. Nothing runs until a
 --- terminal operator collects the flow.
----@class luastd.flow.Flow<T = any>
+---@class luastd.flow.Flow<T = unknown>
 local Flow = {}
 
 ---@class luastd.flow
@@ -438,7 +438,7 @@ function flow.merge(flows) end
 function Flow:merge(other) end
 
 --- A hot flow that replays the last `replay` values to new subscribers.
----@class luastd.flow.SharedFlow<T = any>: luastd.flow.Flow<T>
+---@class luastd.flow.SharedFlow<T = unknown>: luastd.flow.Flow<T>
 local SharedFlow = {}
 
 --- Snapshot of the current replay buffer. `n` preserves its size when values are `nil`.
@@ -450,7 +450,7 @@ SharedFlow.replay_cache = {}
 SharedFlow.subscription_count = 0
 
 --- Mutable shared flow surface; `share_in` returns only the read-only SharedFlow.
----@class luastd.flow.MutableSharedFlow<T = any>: luastd.flow.SharedFlow<T>
+---@class luastd.flow.MutableSharedFlow<T = unknown>: luastd.flow.SharedFlow<T>
 local MutableSharedFlow = {}
 
 --- Emit a value to all subscribers.
@@ -484,7 +484,7 @@ function SharedFlow:as_shared_flow() end
 function flow.mutable_shared_flow(replay, extra_buffer, on_overflow) end
 
 --- A read-only state flow holding a single state value.
----@class luastd.flow.StateFlow<T = any>: luastd.flow.SharedFlow<T>
+---@class luastd.flow.StateFlow<T = unknown>: luastd.flow.SharedFlow<T>
 local StateFlow = {}
 
 --- The current state value.
@@ -492,7 +492,7 @@ local StateFlow = {}
 StateFlow.value = nil
 
 --- A mutable state flow with one current state value.
----@class luastd.flow.MutableStateFlow<T = any>: luastd.flow.StateFlow<T>
+---@class luastd.flow.MutableStateFlow<T = unknown>: luastd.flow.StateFlow<T>
 local MutableStateFlow = {}
 
 ---@type T
