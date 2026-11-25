@@ -1,5 +1,4 @@
 -- Port of kotlinx.coroutines' MutexTest.
----@diagnostic disable: await-in-sync
 
 local async = require("luastd.async")
 local luastd_test = require("luastd_test")
@@ -103,8 +102,33 @@ describe("MutexTest", function ()
         end)
     )
 
-    -- defer: requires 10000 unconfined waiters; heavy and no unconfined dispatcher.
-    pending("testUnconfinedStackOverflow")
+    -- adapted: the runtime schedules waiters on its LocalSet instead of
+    -- recursively resuming them through Unconfined; exercise queued lock
+    -- handoff with a bounded number of waiters supported by this runtime.
+    it(
+        "testUnconfinedStackOverflow",
+        runtest({ timeout = 10000 }, function ()
+            local waiters = 128
+            local mutex = async.mutex(true)
+            local entered = 0
+            local done = 0
+            local jobs = {}
+            for _ = 1, waiters do
+                jobs[#jobs + 1] = async.launch(function ()
+                    entered = entered + 1
+                    mutex:with_lock(function () done = done + 1 end)
+                end)
+            end
+            while entered < waiters do
+                async.yield()
+            end
+            mutex:unlock()
+            for _, job in ipairs(jobs) do
+                async.join(job)
+            end
+            assert.is_equal(waiters, done)
+        end)
+    )
 
     it(
         "holdLock",
@@ -186,7 +210,8 @@ describe("MutexTest", function ()
         end)
     )
 
-    -- defer: JS miscompilation reproducer; not applicable.
+    -- not-applicable: this reproduces a Kotlin/JS IR inlining bug in the
+    -- Kotlin compiler; luastd does not target Kotlin/JS or share that compiler.
     pending("testWithLockJsMiscompilation")
 
     it("testMutexIsNotSemaphore", function ()
