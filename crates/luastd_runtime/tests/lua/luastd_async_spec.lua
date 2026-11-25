@@ -239,6 +239,25 @@ describe("luastd.async", function ()
     end)
 
     describe("scope", function ()
+        it("cancelled parents do not enter nested builders", function ()
+            local builders = {
+                function (body) async.scope(body) end, function (body) async.supervisor_scope(body) end,
+                function (body) async.with_timeout(60000, body) end,
+                function (body) async.with_context(async.context(), body) end
+            }
+            async.scope(function (parent)
+                for _, build in ipairs(builders) do
+                    local entered = false
+                    local child = parent:launch(function (scope)
+                        scope:cancel()
+                        build(function () entered = true end)
+                    end)
+                    async.join(child)
+                    assert.is_false(entered)
+                end
+            end)
+        end)
+
         it("waits for its children", function ()
             local done = 0
             async.scope(function ()

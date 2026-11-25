@@ -148,7 +148,14 @@ end)
 local function run_scope(kind, body, ms, coroutine_name, parent)
     local handle = core.enter(kind, coroutine_name, parent)
     if ms then core.timeout(handle, ms) end
-    local result = pack(raw_pcall(body, wrap_scope(handle)))
+    local result
+    if core.active() then
+        result = pack(raw_pcall(body, wrap_scope(handle)))
+    else
+        -- Structured builders inherit an already-cancelled parent and must
+        -- not enter user code before reporting cancellation.
+        result = pack(false, CANCELLED)
+    end
     local status, err = finish(handle, result)
     if status == "ok" then return unpack(result, 2, result.n) end
     if status == "failed" then error(err, 0) end
