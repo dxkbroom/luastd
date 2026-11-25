@@ -200,7 +200,7 @@ function Flow:on_each(fn) end
 function Flow:on_completion(fn) end
 
 --- Run `fn` before collection starts.
----@param fn fun()
+---@param fn fun(emit: fun(value: T))
 ---@return luastd.flow.Flow<T>
 function Flow:on_start(fn) end
 
@@ -213,6 +213,17 @@ function Flow:on_empty(fn) end
 ---@param n integer
 ---@return luastd.flow.Flow<T>
 function Flow:take(n) end
+
+--- Share this flow eagerly in `scope` and expose the latest value as a read-only state flow.
+--- With `initial`, return immediately using that value until upstream emits.
+--- Without it, suspend until upstream emits its first value; empty upstream fails.
+---@async
+---@overload fun<T>(self: luastd.flow.Flow<T>, scope: luastd.async.Scope): luastd.flow.StateFlow<T>
+---@generic T
+---@param scope   luastd.async.Scope
+---@param initial T
+---@return luastd.flow.StateFlow<T>
+function Flow:state_in(scope, initial) end
 
 --- Drop the first `n` values.
 ---@param n integer
@@ -404,7 +415,7 @@ function SharedFlow:as_shared_flow() end
 ---@return luastd.flow.SharedFlow<T>
 function flow.mutable_shared_flow(replay, extra_buffer, on_overflow) end
 
---- A shared flow holding a single state value.
+--- A read-only state flow holding a single state value.
 ---@class luastd.flow.StateFlow<T = any>: luastd.flow.SharedFlow<T>
 local StateFlow = {}
 
@@ -412,20 +423,27 @@ local StateFlow = {}
 ---@type T
 StateFlow.value = nil
 
+--- A mutable state flow with one current state value.
+---@class luastd.flow.MutableStateFlow<T = any>: luastd.flow.StateFlow<T>
+local MutableStateFlow = {}
+
+---@type T
+MutableStateFlow.value = nil
+
 --- Update the state with `fn(old)`.
 ---@param fn fun(old: T): T
-function StateFlow:update(fn) end
+function MutableStateFlow:update(fn) end
 
 --- Set the state if it equals `old`.
 ---@param old T
 ---@param new T
 ---@return boolean
-function StateFlow:compare_and_set(old, new) end
+function MutableStateFlow:compare_and_set(old, new) end
 
 --- Create a mutable state flow seeded with `initial`.
 ---@generic T
 ---@param initial T
----@return luastd.flow.StateFlow<T>
+---@return luastd.flow.MutableStateFlow<T>
 function flow.mutable_state_flow(initial) end
 
 return flow

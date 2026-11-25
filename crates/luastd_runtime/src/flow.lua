@@ -1070,5 +1070,71 @@ function flow.mutable_state_flow(initial)
     return state
 end
 
+local function readonly_state_flow(state)
+    local view = {
+        _sf = state._sf,
+        _run = state._run,
+        _shared_flow = true
+    }
+    return setmetatable(view, {
+        __index = function (self, key)
+            if key == "value" then return state.value end
+            return shared_index(self, key)
+        end,
+        __newindex = function (_, key)
+            error(async._new_error("IllegalState", ("StateFlow.%s is read-only"):format(tostring(key))), 2)
+        end
+    })
+end
+
+function Flow:state_in(scope, ...)
+    if type(scope) ~= "table" or type(scope.launch) ~= "function" or type(scope.coroutine_context) ~= "function" then
+        error(async._new_error("InvalidArgument", "state_in requires an async Scope"), 2)
+    end
+    async.with_context(scope:coroutine_context(), function () async.ensure_active() end)
+
+    if select("#", ...) > 0 then
+        local initial = ...
+        local state = flow.mutable_state_flow(initial)
+        scope:launch(function ()
+            self._run(function (value) state:set_value(value) end)
+        end)
+        return readonly_state_flow(state)
+    end
+
+    local first = async.channel(1)
+    local state
+    local delivered = false
+    local sharing = scope:launch(function ()
+        local ok, err = pcall(function ()
+            self._run(function (value)
+                if state then
+                    state:set_value(value)
+                else
+                    state = flow.mutable_state_flow(value)
+                    first:send({ state = state })
+                end
+            end)
+        end)
+        if not state then
+            if ok then
+                err = async._new_error("NoSuchElementException", "state_in requires a flow that emits at least one value")
+            end
+            first:send({ error = err })
+            return
+        end
+        if not ok then error(err, 0) end
+    end)
+    local result = async.finally(function ()
+        local value = first:receive()
+        delivered = true
+        return value
+    end, function ()
+        if not delivered then sharing:cancel() end
+    end)
+    if result.error then error(result.error, 0) end
+    return readonly_state_flow(result.state)
+end
+
 flow.Flow = Flow
 return flow, Flow
