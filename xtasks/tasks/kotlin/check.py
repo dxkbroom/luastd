@@ -1,5 +1,5 @@
 #!/usr/bin/env -S uv run --project xtasks python
-# MISE description="Report which kotlinx.coroutines tests the Kotlin ports cover (ported/adapted/not-applicable/defer/todo/missing)"
+# MISE description="Report which kotlinx.coroutines tests the Kotlin ports cover (ported/adapted/deprecated/not-applicable/defer/todo/missing)"
 # USAGE flag "--check" help="Exit 1 if a Kotlin test is missing from its port or a port names a test Kotlin does not have"
 # USAGE flag "--class <name>" help="Check one Kotlin test class"
 # USAGE arg "[FILES]..." help="Port files (default: crates/luastd_runtime/tests/lua/kotlinx/*.lua)"
@@ -84,6 +84,7 @@ def main(argv: list[str]) -> int:
                 for status in (
                     "ported",
                     "adapted",
+                    "deprecated",
                     "not-applicable",
                     "defer",
                     "todo",
@@ -103,6 +104,7 @@ def main(argv: list[str]) -> int:
                 for status in (
                     "ported",
                     "adapted",
+                    "deprecated",
                     "not-applicable",
                     "defer",
                     "todo",

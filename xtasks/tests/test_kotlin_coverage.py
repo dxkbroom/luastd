@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 
 from kotlin_coverage import (
     build_report,
+    filter_report,
     has_gaps,
     kotlin_class_test_methods,
     kotlin_test_classes,
@@ -34,6 +35,9 @@ SOURCE = """class ExampleTest {
     fun testTodo() {}
 
     @Test
+    fun testDeprecated() {}
+
+    @Test
     fun testMissing() {}
 }
 """
@@ -45,6 +49,8 @@ describe("ExampleTest", function ()
     it("testAdapted", function () t:expect(1); t:finish(3) end)
     -- todo: the API needed by this case is not available.
     pending("testTodo")
+    -- deprecated: this case exercises a deprecated Kotlin API.
+    pending("testDeprecated")
     it("testStale", function () end)
 end)
 """
@@ -85,6 +91,11 @@ class KotlinCoverageTests(unittest.TestCase):
                     "this port exercises the same case with an existing primitive.",
                 ),
                 ("testTodo", "todo", "the API needed by this case is not available."),
+                (
+                    "testDeprecated",
+                    "deprecated",
+                    "this case exercises a deprecated Kotlin API.",
+                ),
                 ("testStale", "ported", ""),
             ],
             [(test.name, test.status, test.reason) for test in ports[0].tests],
@@ -151,10 +162,10 @@ class NestedTest {
         cls = report["classes"][0]
         self.assertEqual("ExampleTest", cls["name"])
         self.assertEqual(
-            ["ported", "adapted", "todo", "missing"],
+            ["ported", "adapted", "todo", "deprecated", "missing"],
             [test["status"] for test in cls["tests"]],
         )
-        self.assertEqual([{"name": "testStale", "line": 8}], cls["stale_tests"])
+        self.assertEqual([{"name": "testStale", "line": 10}], cls["stale_tests"])
         self.assertEqual(1, cls["counts"]["missing"])
         self.assertEqual("matches", cls["tests"][0]["trace"]["status"])
         self.assertEqual("differs", cls["tests"][1]["trace"]["status"])
@@ -175,7 +186,7 @@ class NestedTest {
         self.assertEqual(
             "sample/ExampleTest.kt", decoded["classes"][0]["kotlin_source"]
         )
-        markdown = markdown_report(report)
+        markdown = markdown_report(filter_report(report, None))
         self.assertIn("# Kotlin coroutine test ports", markdown)
         self.assertIn("- **ExampleTest**", markdown)
         self.assertIn("  - ✓ `testKnown` — ported", markdown)
@@ -183,6 +194,7 @@ class NestedTest {
         self.assertIn("kotlin: `expect(1) → finish(2)`", markdown)
         self.assertIn("lua: `expect(1) → finish(2)`", markdown)
         self.assertIn("  - ✗ `testMissing` — missing", markdown)
+        self.assertNotIn("testDeprecated", markdown)
         self.assertIn("## Issues", markdown)
 
     def test_valid_report_passes_check_when_only_todo_and_na_remain(self) -> None:
@@ -210,6 +222,21 @@ end)
         )
         self.assertEqual([], report["issues"])
         self.assertFalse(has_gaps(report))
+
+    def test_deprecated_cases_are_hidden_by_default_and_selectable(self) -> None:
+        report = build_report(
+            [self.port_file], self.root, self.root, self.source_loader
+        )
+        default = filter_report(report, None)
+        self.assertNotIn(
+            "testDeprecated",
+            [test["name"] for cls in default["classes"] for test in cls["tests"]],
+        )
+        deprecated = filter_report(report, {"deprecated"})
+        self.assertEqual(
+            ["testDeprecated"],
+            [test["name"] for cls in deprecated["classes"] for test in cls["tests"]],
+        )
 
     def test_check_fails_for_missing_reason_and_duplicate_mapping(self) -> None:
         self.port_file.write_text("""-- kotlin: sample/ExampleTest.kt@1.11.0

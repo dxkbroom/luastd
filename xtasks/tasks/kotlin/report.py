@@ -6,6 +6,7 @@
 # USAGE group "output" "--json" "--markdown"
 # USAGE flag "--ported" help="Include ported tests; if no status flag is set, show all statuses"
 # USAGE flag "--adapted" help="Include adapted tests"
+# USAGE flag "--deprecated" help="Include deprecated Kotlin tests (hidden by default)"
 # USAGE flag "--not-applicable" help="Include not-applicable tests"
 # USAGE flag "--defer" help="Include tests deferred because the current API cannot support them"
 # USAGE flag "--todo" help="Include unported tests that can be worked on with the current API"
@@ -36,12 +37,21 @@ KOTLINX = Path(os.environ.get("KOTLINX_DIR") or ROOT.parent / "kotlinx.coroutine
 STATUS_SYMBOL = {
     "ported": "✓",
     "adapted": "~",
+    "deprecated": "†",
     "not-applicable": "○",
     "defer": "↷",
     "todo": "·",
     "missing": "✗",
 }
-STATUSES = ("ported", "adapted", "not-applicable", "defer", "todo", "missing")
+STATUSES = (
+    "ported",
+    "adapted",
+    "deprecated",
+    "not-applicable",
+    "defer",
+    "todo",
+    "missing",
+)
 
 
 def counts_label(counts: dict[str, int], *, compact: bool = False) -> str:
@@ -49,6 +59,7 @@ def counts_label(counts: dict[str, int], *, compact: bool = False) -> str:
     for key, status in (
         ("ported", "ported"),
         ("adapted", "adapted"),
+        ("deprecated", "deprecated"),
         ("not_applicable", "not-applicable"),
         ("defer", "defer"),
         ("todo", "todo"),

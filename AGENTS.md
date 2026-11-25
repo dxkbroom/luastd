@@ -123,6 +123,8 @@ so each reads next to its Kotlin source:
   - `it(name, runtest(...))` - ported;
   - the same with a `-- adapted: <why>` comment above - ported with a deliberate
     difference;
+  - `pending(name)` with `-- deprecated: <why>` when the Kotlin test exercises
+    an API deprecated by kotlinx.coroutines (separate from runtime applicability);
   - `pending(name)` with `-- todo: <why>` (an unported case that can be worked
     on with the current API);
   - `pending(name)` with `-- defer: <why>` when review has confirmed that the
@@ -139,7 +141,7 @@ so each reads next to its Kotlin source:
   (main-kbroom).
 - Kotlin's `TimeoutCancellationException` is luastd's `Timeout` error kind;
   `TestException`/`1`/`2`/`3` are `luastd_test.TestException()` etc.
-- `mise run kotlin:check` reports ported/adapted/not-applicable/defer/todo/missing per class;
+- `mise run kotlin:check` reports ported/adapted/deprecated/not-applicable/defer/todo/missing per class;
   `--check` fails on missing tests or names Kotlin does not have.
 
 ## Dependencies

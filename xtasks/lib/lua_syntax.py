@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from tree_sitter import Node
 from tree_sitter_language_pack import get_parser
 
-_MARK = re.compile(r"^\s*--\s*(adapted|not-applicable|defer|todo):\s*(.*)$")
+_MARK = re.compile(r"^\s*--\s*(adapted|deprecated|not-applicable|defer|todo):\s*(.*)$")
 _COMMENT = re.compile(r"^\s{4}--")
 
 

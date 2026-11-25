@@ -65,7 +65,8 @@ describe("ParentCancellationTest", function ()
         end)
     )
 
-    -- not-applicable: the deprecated BroadcastChannel builder is not exposed.
+    -- deprecated: Kotlin suppresses the deprecated BroadcastChannel builder;
+    -- luastd does not expose BroadcastChannel.
     pending("testBroadcastChild")
 
     -- not-applicable: Kotlin asserts the supervisor's unhandled-exception

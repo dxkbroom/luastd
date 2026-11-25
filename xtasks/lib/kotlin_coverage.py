@@ -12,9 +12,17 @@ from kotlin_syntax import KotlinSources
 from lua_syntax import LuaSources
 
 KOTLIN_REF = re.compile(r"^\s*-- kotlin:\s*(\S+)@(\S+)\s*$")
-MARK = re.compile(r"^\s*--\s*(adapted|not-applicable|defer|todo):\s*(.*)$")
+MARK = re.compile(r"^\s*--\s*(adapted|deprecated|not-applicable|defer|todo):\s*(.*)$")
 COMMENT = re.compile(r"^\s*--(.*)$")
-STATUSES = ("ported", "adapted", "not-applicable", "defer", "todo", "missing")
+STATUSES = (
+    "ported",
+    "adapted",
+    "deprecated",
+    "not-applicable",
+    "defer",
+    "todo",
+    "missing",
+)
 KOTLIN_TEST_TAG = "1.11.0"
 KOTLIN_TEST_DIR = "kotlinx-coroutines-core/common/test"
 
@@ -130,7 +138,12 @@ def parse_port(
                 # One mark above the first pending call can cover an adjacent run.
                 previous = calls_by_line.get(index - 1)
                 chained = bool(previous and previous.kind == "pending")
-                if mark and mark[0] in ("not-applicable", "defer", "todo"):
+                if mark and mark[0] in (
+                    "deprecated",
+                    "not-applicable",
+                    "defer",
+                    "todo",
+                ):
                     group_mark = mark
                     status, reason = mark
                 elif mark:
@@ -147,7 +160,12 @@ def parse_port(
                     status, reason = mark
                 else:
                     status, reason = "ported", ""
-                    if mark and mark[0] in ("not-applicable", "defer", "todo"):
+                    if mark and mark[0] in (
+                        "deprecated",
+                        "not-applicable",
+                        "defer",
+                        "todo",
+                    ):
                         issues.append(
                             Issue(
                                 "invalid-status-marker",
@@ -452,6 +470,7 @@ def build_report(
                 mapped[test.name] = test
                 if not test.reason and test.status in (
                     "adapted",
+                    "deprecated",
                     "not-applicable",
                     "defer",
                     "todo",
@@ -631,17 +650,14 @@ def filter_report(
     report: dict[str, object], selected: set[str] | None, class_name: str | None = None
 ) -> dict[str, object]:
     """Keep only selected test statuses while preserving report diagnostics."""
-    if not selected and class_name is None:
-        return report
-
     status_keys = [status.replace("-", "_") for status in STATUSES]
-    selected_statuses = selected or set(STATUSES)
+    selected_statuses = selected if selected else set(STATUSES) - {"deprecated"}
     classes = []
     for cls in report["classes"]:
         if class_name is not None and cls["name"] != class_name:
             continue
         tests = [test for test in cls["tests"] if test["status"] in selected_statuses]
-        if not tests and not ("missing" in selected and cls["stale_tests"]):
+        if not tests and not ("missing" in selected_statuses and cls["stale_tests"]):
             continue
         filtered = {**cls, "tests": tests}
         filtered["counts"] = {
@@ -649,7 +665,7 @@ def filter_report(
             for key in status_keys
         }
         filtered["stale_tests"] = [
-            stale for stale in cls["stale_tests"] if "missing" in selected
+            stale for stale in cls["stale_tests"] if "missing" in selected_statuses
         ]
         classes.append(filtered)
 
@@ -681,6 +697,7 @@ def markdown_report(report: dict[str, object]) -> str:
         for key, label in (
             ("ported", "ported"),
             ("adapted", "adapted"),
+            ("deprecated", "deprecated"),
             ("not_applicable", "not-applicable"),
             ("defer", "defer"),
             ("todo", "todo"),
@@ -698,6 +715,7 @@ def markdown_report(report: dict[str, object]) -> str:
     status_icon = {
         "ported": "✓",
         "adapted": "~",
+        "deprecated": "†",
         "not-applicable": "○",
         "defer": "↷",
         "todo": "·",
@@ -709,6 +727,7 @@ def markdown_report(report: dict[str, object]) -> str:
             for key, label in (
                 ("ported", "ported"),
                 ("adapted", "adapted"),
+                ("deprecated", "deprecated"),
                 ("not_applicable", "not-applicable"),
                 ("defer", "defer"),
                 ("todo", "todo"),
