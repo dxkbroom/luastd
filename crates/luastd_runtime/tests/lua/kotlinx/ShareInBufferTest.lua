@@ -1,35 +1,58 @@
 -- kotlin: kotlinx-coroutines-core/common/test/flow/sharing/ShareInBufferTest.kt@1.11.0
-describe("ShareInBufferTest", function ()
-    -- defer: luastd has replayable mutable_shared_flow but no share_in operator
-    -- that launches this cold upstream with an eager sharing strategy and default
-    -- buffer capacity.
-    pending("testReplay0DefaultBuffer")
+local async = require("luastd.async")
+local flow = require("luastd.flow")
+local runtest = require("luastd_test").runtest
 
-    -- defer: there is no share_in builder to combine replay=1 with the default
-    -- sharing buffer and test its backpressure batch size.
+describe("ShareInBufferTest", function ()
+    -- adapted: check ordered delivery and bounded producer lead for eager replay=0
+    -- sharing; the scheduler does not reproduce Kotlin's exact batch trace.
+    it("testReplay0DefaultBuffer", runtest(function (t)
+        local n = 200
+        local capacity = 64
+        local produced = 0
+        local received = 0
+        local max_lead = 0
+        local source = flow.new(function (emit)
+            for i = 0, n - 1 do
+                produced = produced + 1
+                emit(i)
+            end
+            emit(-1)
+        end)
+        local shared = source:share_in(async.current())
+        shared:take(n):collect(function (value)
+            assert.is_equal(received, value)
+            received = received + 1
+            max_lead = math.max(max_lead, produced - received)
+        end)
+        assert.is_equal(n, received)
+        assert.is_true(max_lead > 1)
+        assert.is_true(max_lead <= capacity + 1)
+        t:finish(1)
+    end))
+
+    -- defer: current share_in allocates replay + 64 slots, so replay=1 makes
+    -- the effective shared buffer 65 instead of Kotlin's padded 64.
     pending("testReplay1DefaultBuffer")
 
-    -- defer: share_in is absent, so replay=10 cannot be checked for padding to
-    -- the default buffer capacity during active sharing.
+    -- defer: current share_in adds replay to its default 64 slots instead of
+    -- using max(replay, default capacity) when replay is greater than zero.
     pending("testReplay10DefaultBuffer")
-
-    -- defer: share_in is absent, so replay=100 cannot be tested against the
-    -- max(replay, default capacity) shared buffer.
     pending("testReplay100DefaultBuffer")
 
-    -- defer: Flow:buffer exists, but there is no share_in operation with which
-    -- to verify that a default upstream buffer preserves the sharing default.
+    -- defer: buffer fusion does not carry an upstream default buffer through
+    -- share_in; source and shared buffers remain separate.
     pending("testDefaultBufferKeepsDefault")
 
-    -- defer: there is no sharing builder to combine buffer(0) with replay=0
-    -- and test true rendezvous backpressure across subscribers.
+    -- defer: share_in does not fuse buffer(0) into its shared-flow capacity;
+    -- it retains the default 64-slot shared buffer.
     pending("testOverrideDefaultBuffer0")
 
-    -- defer: buffer(10) exists, but share_in is missing, so its capacity cannot
-    -- be tested as the effective shared-flow buffer.
+    -- defer: share_in does not use buffer(10) as its effective shared-flow
+    -- capacity; the source buffer and 64-slot shared buffer remain separate.
     pending("testOverrideDefaultBuffer10")
 
-    -- defer: Flow:buffer can compose capacities, but there is no share_in
-    -- operation to add replay capacity and verify the resulting shared buffer.
+    -- defer: upstream buffer capacities and replay are not fused into a single
+    -- effective shared buffer; current capacities compose independently.
     pending("testBufferReplaySum")
 end)
