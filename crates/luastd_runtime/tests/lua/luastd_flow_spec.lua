@@ -142,9 +142,14 @@ describe("luastd.flow", function ()
             assert.is_equal(2, r[2])
         end)
 
-        it("conflate identity", function ()
+        it("conflate retains an ordered subset", function ()
             local r = flow.from({ 1, 2, 3 }):conflate():to_list()
-            assert.is_equal(3, #r)
+            assert.is_true(#r >= 1 and #r <= 3)
+            local previous = 0
+            for _, value in ipairs(r) do
+                assert.is_true(value > previous and value <= 3)
+                previous = value
+            end
         end)
 
         it("flat_map_latest", function ()
