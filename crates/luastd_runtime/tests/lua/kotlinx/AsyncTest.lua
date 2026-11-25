@@ -38,7 +38,7 @@ describe("AsyncTest", function ()
         end)
     )
 
-    -- todo: no `CoroutineStart.UNDISPATCHED`; `async` always dispatches.
+    -- defer: no `CoroutineStart.UNDISPATCHED`; `async` always dispatches.
     pending("testUndispatched")
 
     it(
@@ -54,7 +54,7 @@ describe("AsyncTest", function ()
         end)
     )
 
-    -- todo: no `NonCancellable`, `CoroutineStart.ATOMIC` or cancellation causes.
+    -- defer: no `NonCancellable`, `CoroutineStart.ATOMIC` or cancellation causes.
     pending("testCancellationWithCause")
 
     -- adapted: no standalone `Job()` parent; the deferred lives in a
@@ -132,7 +132,7 @@ describe("AsyncTest", function ()
         end)
     )
 
-    -- todo: no `NonCancellable` or `CoroutineStart.ATOMIC`.
+    -- defer: no `NonCancellable` or `CoroutineStart.ATOMIC`.
     pending("testCancellationTransparency")
 
     it(
@@ -204,10 +204,10 @@ describe("AsyncTest", function ()
         end)
     )
 
-    -- todo: no standalone `Job()` parent or `CoroutineStart.ATOMIC`.
+    -- defer: no standalone `Job()` parent or `CoroutineStart.ATOMIC`.
     pending("testOverriddenParent")
 
-    -- todo: no `invokeOnCompletion`/`DisposableHandle` or `getCompleted`.
+    -- defer: no `invokeOnCompletion`/`DisposableHandle` or `getCompleted`.
     pending("testIncompleteAsyncState")
 
     -- not-applicable: no dispatchers (`Dispatchers.Unconfined`); one LocalSet runs everything.

@@ -1,0 +1,241 @@
+-- Cold flows.
+---@diagnostic disable: await-in-sync
+
+local flow = require("luastd.flow")
+local async = require("luastd.async")
+
+describe("luastd.flow", function ()
+    describe("builders and terminals", function ()
+        it("flow.from + to_list", function ()
+            local r = flow.from({ 1, 2, 3 }):to_list()
+            assert.is_equal(3, #r)
+            assert.is_equal(1, r[1])
+            assert.is_equal(3, r[3])
+        end)
+
+        it("flow.new + collect", function ()
+            local acc = {}
+            flow.new(function (emit)
+                emit(1)
+                emit(2)
+                emit(3)
+            end):collect(function (v) table.insert(acc, v) end)
+            assert.is_equal(3, #acc)
+            assert.is_equal(2, acc[2])
+        end)
+
+        it("first", function ()
+            assert.is_equal(2, flow.from({ 2, 3, 4 }):first())
+        end)
+
+        it("count", function ()
+            assert.is_equal(3, flow.from({ 1, 2, 3 }):count())
+        end)
+
+        it("fold", function ()
+            assert.is_equal(10, flow.from({ 1, 2, 3, 4 }):fold(0, function (a, v) return a + v end))
+        end)
+    end)
+
+    describe("deferred operators", function ()
+        it("flat_map_concat", function ()
+            local r = flow.from({ 1, 2 }):flat_map_concat(function (x)
+                return flow.from({ x, x * 10 })
+            end):to_list()
+            assert.is_equal(4, #r)
+            assert.is_equal(1, r[1])
+            assert.is_equal(10, r[2])
+            assert.is_equal(2, r[3])
+            assert.is_equal(20, r[4])
+        end)
+
+        it("scan", function ()
+            local r = flow.from({ 1, 2, 3 }):scan(0, function (a, v) return a + v end):to_list()
+            assert.is_equal(4, #r)
+            assert.is_equal(0, r[1])
+            assert.is_equal(6, r[4])
+        end)
+
+        it("retry", function ()
+            local attempts = 0
+            local r = flow.new(function (emit)
+                attempts = attempts + 1
+                if attempts == 1 then error("boom") end
+                emit(42)
+            end):retry(1):to_list()
+            assert.is_equal(1, #r)
+            assert.is_equal(42, r[1])
+        end)
+
+        it("retry predicates do not retry downstream failures", function ()
+            local attempts = 0
+            local predicate_calls = 0
+            local r = flow.new(function (emit)
+                attempts = attempts + 1
+                emit(attempts)
+                if attempts < 2 then error("retry me", 0) end
+            end):retry(2, function (err)
+                predicate_calls = predicate_calls + 1
+                return err == "retry me"
+            end):to_list()
+            assert.is_equal(2, #r)
+            assert.is_equal(2, attempts)
+            assert.is_equal(1, predicate_calls)
+
+            local downstream_calls = 0
+            local ok = pcall(function ()
+                flow.of_one(1):retry(5):map(function ()
+                    downstream_calls = downstream_calls + 1
+                    error("downstream failure")
+                end):to_list()
+            end)
+            assert.is_false(ok)
+            assert.is_equal(1, downstream_calls)
+        end)
+
+        it("retry_when receives zero-based attempt numbers", function ()
+            local attempts = 0
+            local observed = {}
+            local r = flow.new(function (emit)
+                attempts = attempts + 1
+                if attempts < 3 then error("retry me", 0) end
+                emit(42)
+            end):retry_when(function (err, attempt)
+                assert.is_equal("retry me", err)
+                table.insert(observed, attempt)
+                return attempt < 2
+            end):to_list()
+            assert.is_equal(3, attempts)
+            assert.is_equal(2, #observed)
+            assert.is_equal(0, observed[1])
+            assert.is_equal(1, observed[2])
+            assert.is_equal(42, r[1])
+        end)
+
+        it("chunked", function ()
+            local r = flow.from({ 1, 2, 3, 4, 5 }):chunked(2):to_list()
+            assert.is_equal(3, #r)
+            assert.is_equal(2, #r[1])
+            assert.is_equal(5, r[3][1])
+        end)
+
+        it("zip", function ()
+            local r = flow.from({ 1, 2, 3 }):zip(flow.from({ 10, 20, 30 }), function (a, b) return a + b end):to_list()
+            assert.is_equal(3, #r)
+            assert.is_equal(11, r[1])
+            assert.is_equal(33, r[3])
+        end)
+
+        it("combine", function ()
+            local r = flow.from({ 1, 2 }):combine(flow.from({ 10, 20 }), function (a, b) return a + b end):to_list()
+            assert.same({ 11, 12, 22 }, r)
+        end)
+
+        it("transform_while", function ()
+            local r = flow.from({ 1, 2, 3, 4 }):transform_while(function (emit, v)
+                if v > 2 then return false end
+                emit(v)
+                return true
+            end):to_list()
+            assert.is_equal(2, #r)
+            assert.is_equal(1, r[1])
+            assert.is_equal(2, r[2])
+        end)
+
+        it("conflate retains an ordered subset", function ()
+            local r = flow.from({ 1, 2, 3 }):conflate():to_list()
+            assert.is_true(#r >= 1 and #r <= 3)
+            local previous = 0
+            for _, value in ipairs(r) do
+                assert.is_true(value > previous and value <= 3)
+                previous = value
+            end
+        end)
+
+        it("flat_map_latest", function ()
+            local r = flow.from({ 1, 2 }):flat_map_latest(function (x)
+                return flow.from({ x, x * 10 })
+            end):to_list()
+            assert.is_equal(4, #r)
+        end)
+    end)
+
+    describe("shared and state flow", function ()
+        it("shared flow replays", function ()
+            local sf = flow.mutable_shared_flow(1)
+            sf:emit(42)
+            local r = sf:take(1):to_list()
+            assert.is_equal(1, #r)
+            assert.is_equal(42, r[1])
+        end)
+
+        it("state flow value", function ()
+            local sf = flow.mutable_state_flow(0)
+            assert.is_equal(0, sf.value)
+            sf.value = 5
+            assert.is_equal(5, sf.value)
+            sf:update(function (x) return x + 1 end)
+            assert.is_equal(6, sf.value)
+            assert.is_true(sf:compare_and_set(6, 10))
+            assert.is_equal(10, sf.value)
+            assert.is_false(sf:compare_and_set(0, 1))
+        end)
+    end)
+
+    describe("operators", function ()
+        it("map", function ()
+            local r = flow.from({ 1, 2, 3 }):map(function (x) return x * 2 end):to_list()
+            assert.is_equal(3, #r)
+            assert.is_equal(4, r[2])
+        end)
+
+        it("filter", function ()
+            local r = flow.from({ 1, 2, 3, 4 }):filter(function (x) return x % 2 == 0 end):to_list()
+            assert.is_equal(2, #r)
+            assert.is_equal(2, r[1])
+            assert.is_equal(4, r[2])
+        end)
+
+        it("take", function ()
+            local r = flow.from({ 1, 2, 3, 4 }):take(2):to_list()
+            assert.is_equal(2, #r)
+            assert.is_equal(1, r[1])
+            assert.is_equal(2, r[2])
+        end)
+
+        it("transform", function ()
+            local r = flow.from({ 1, 2 }):transform(function (emit, x)
+                emit(x)
+                emit(x * 10)
+            end):to_list()
+            assert.is_equal(4, #r)
+            assert.is_equal(1, r[1])
+            assert.is_equal(10, r[2])
+        end)
+
+        it("distinct_until_changed", function ()
+            local r = flow.from({ 1, 1, 2, 2, 3 }):distinct_until_changed():to_list()
+            assert.is_equal(3, #r)
+            assert.is_equal(1, r[1])
+            assert.is_equal(2, r[2])
+            assert.is_equal(3, r[3])
+        end)
+
+        it("distinct_until_changed with key", function ()
+            local items = { { id = 1 }, { id = 1 }, { id = 2 } }
+            local r = flow.from(items):distinct_until_changed(function (x) return x.id end):to_list()
+            assert.is_equal(2, #r)
+        end)
+
+        it("chain", function ()
+            local r = flow.from({ 1, 2, 3, 4, 5 })
+                :filter(function (x) return x % 2 == 0 end)
+                :map(function (x) return x * 10 end)
+                :take(2)
+                :to_list()
+            assert.is_equal(2, #r)
+            assert.is_equal(20, r[1])
+            assert.is_equal(40, r[2])
+        end)
+    end)
+end)

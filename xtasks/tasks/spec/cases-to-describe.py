@@ -1,9 +1,9 @@
-#!/usr/bin/env python3
-#MISE description="Rewrite `local cases = { {name=, run=} }` busted specs into describe/it blocks"
-#USAGE flag "--check" help="Only report which files would change; exit 1 if any would"
-#USAGE flag "--no-group" help="Don't nest cases into describe blocks by their first word"
-#USAGE flag "--no-fmt" help="Don't run luafmt on rewritten files"
-#USAGE arg "[FILES]..." help="Spec files to rewrite (default: every spec/*_spec.lua with a cases table)"
+#!/usr/bin/env -S uv run --project xtasks python
+# MISE description="Rewrite `local cases = { {name=, run=} }` busted specs into describe/it blocks"
+# USAGE flag "--check" help="Only report which files would change; exit 1 if any would"
+# USAGE flag "--no-group" help="Don't nest cases into describe blocks by their first word"
+# USAGE flag "--no-fmt" help="Don't run luafmt on rewritten files"
+# USAGE arg "[FILES]..." help="Spec files to rewrite (default: every spec/*_spec.lua with a cases table)"
 """Convert table-driven busted specs into plain describe/it blocks.
 
 Recognised input (indentation is arbitrary, quotes may be ' or "):
@@ -55,16 +55,16 @@ def lua_str(s: str) -> str:
 CASES_START = re.compile(r"^local (\w+) = \{\s*$")
 LOOP = re.compile(
     r"^for _, (\w+) in i?pairs\((\w+)\) do\s*\n\s*it\(\1\.name, \1\.run\)\s*\nend\s*\n?",
-    re.M,
+    re.MULTILINE,
 )
 ENTRY = re.compile(
     r"\{\s*name\s*=\s*(?P<q>[\"'])(?P<name>(?:\\.|(?!(?P=q)).)*)(?P=q)\s*,\s*"
     r"run\s*=\s*function\s*\(\s*\)[ \t]*\n(?P<body>.*?)\n[ \t]*end\s*,?\s*\}\s*,?",
-    re.S,
+    re.DOTALL,
 )
 TOP_IT = re.compile(
     r"^it\((?P<q>[\"'])(?P<name>(?:\\.|(?!(?P=q)).)*)(?P=q),\s*function\s*\(\s*\)[ \t]*\n(?P<body>.*?)\n^end\)\s*\n?",
-    re.S | re.M,
+    re.DOTALL | re.MULTILINE,
 )
 
 
@@ -133,12 +133,16 @@ def convert(path: Path, do_group: bool) -> str | None:
     ]
     expected = len(re.findall(r"\bname\s*=", table_src))
     if len(cases) != expected:
-        raise SystemExit(f"{path}: parsed {len(cases)} of {expected} cases; refusing to rewrite")
+        raise SystemExit(
+            f"{path}: parsed {len(cases)} of {expected} cases; refusing to rewrite"
+        )
 
     rest = "\n".join(lines[:start]) + "\n\x00CASES\x00\n" + "\n".join(lines[end:])
     loop = LOOP.search(rest)
     if not loop or loop.group(2) != var:
-        raise SystemExit(f"{path}: no `for _, case in pairs({var}) do it(case.name, case.run) end` loop found")
+        raise SystemExit(
+            f"{path}: no `for _, case in pairs({var}) do it(case.name, case.run) end` loop found"
+        )
     rest = rest[: loop.start()] + rest[loop.end() :]
 
     # Fold top-level it(...) blocks into the describe, before the table cases.

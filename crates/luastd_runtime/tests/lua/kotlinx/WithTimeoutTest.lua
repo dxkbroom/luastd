@@ -196,16 +196,27 @@ describe("WithTimeoutTest", function ()
     it(
         "testIncompleteWithTimeoutState",
         runtest(function ()
-            local timeout_scope = async.with_timeout(math.huge, function (scope)
-                return scope
+            local timeout_job
+            async.with_timeout(math.huge, function (scope)
+                timeout_job = scope:coroutine_context():job()
             end)
-            assert.is_true(timeout_scope:is_completed())
-            assert.is_false(timeout_scope:is_active())
-            assert.is_false(timeout_scope:is_cancelled())
+            async.join(timeout_job)
+            assert.is_true(timeout_job:is_completed())
+            assert.is_false(timeout_job:is_active())
+            assert.is_false(timeout_job:is_cancelled())
         end)
     )
 
-    -- todo: luastd has no CoroutineName (nor withContext) to put in the
-    -- Timeout message.
-    pending("testTimeoutCancellationExceptionIncludesCoroutineName")
+    it(
+        "testTimeoutCancellationExceptionIncludesCoroutineName",
+        runtest(function ()
+            local err = error_of(function ()
+                async.with_context(async.context(async.coroutine_name("waiting for x")), function ()
+                    async.with_timeout(1, function () async.delay(math.huge) end)
+                end)
+            end)
+            assert.is_true(err.message:find("waiting for x", 1, true) ~= nil)
+            assert.is_true(err.message:lower():find("timed out waiting", 1, true) ~= nil)
+        end)
+    )
 end)

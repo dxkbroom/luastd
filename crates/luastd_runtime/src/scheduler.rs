@@ -26,6 +26,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::errors::cancelled;
 
+const UNATTACHED_CHILD: usize = usize::MAX;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
     Root,
@@ -76,6 +78,10 @@ impl Status {
 pub(crate) struct Node {
     kind: Kind,
     parent: Option<Weak<Node>>,
+    /// Slot in the parent's child vector, or `UNATTACHED_CHILD` for roots.
+    parent_index: Cell<usize>,
+    /// Coroutine name inherited from the parent context, if any.
+    coroutine_name: Option<String>,
     token: CancellationToken,
     /// Running child jobs; each removes itself when it completes.
     children: RefCell<Vec<Rc<Node>>>,
@@ -86,13 +92,26 @@ pub(crate) struct Node {
     on_cancel: RefCell<Vec<Function>>,
     result: RefCell<Option<(Status, Value)>>,
     done: Notify,
+    /// Lazy jobs are not scheduled until `start_job` is called.
+    lazy: Cell<bool>,
+    started: Cell<bool>,
+    start_notify: Notify,
 }
 
 impl Node {
-    fn new(kind: Kind, parent: Option<&Rc<Node>>, token: CancellationToken) -> Rc<Self> {
+    fn new(
+        kind: Kind,
+        parent: Option<&Rc<Node>>,
+        token: CancellationToken,
+        coroutine_name: Option<String>,
+    ) -> Rc<Self> {
+        let coroutine_name =
+            coroutine_name.or_else(|| parent.and_then(|parent| parent.coroutine_name.clone()));
         Rc::new(Self {
             kind,
             parent: parent.map(Rc::downgrade),
+            parent_index: Cell::new(UNATTACHED_CHILD),
+            coroutine_name,
             token,
             children: RefCell::default(),
             child_failure: RefCell::default(),
@@ -101,6 +120,9 @@ impl Node {
             on_cancel: RefCell::default(),
             result: RefCell::default(),
             done: Notify::new(),
+            lazy: Cell::new(false),
+            started: Cell::new(true),
+            start_notify: Notify::new(),
         })
     }
 
@@ -110,6 +132,36 @@ impl Node {
 
     fn is_done(&self) -> bool {
         self.result.borrow().is_some()
+    }
+
+    fn add_child(parent: &Rc<Self>, child: Rc<Self>) {
+        let mut children = parent.children.borrow_mut();
+        let index = children.len();
+        debug_assert_eq!(child.parent_index.get(), UNATTACHED_CHILD);
+        child.parent_index.set(index);
+        children.push(child);
+    }
+
+    fn remove_child(parent: &Self, child: &Self) {
+        let index = child.parent_index.get();
+        assert_ne!(
+            index, UNATTACHED_CHILD,
+            "completed node was not attached to its parent"
+        );
+        let mut children = parent.children.borrow_mut();
+        assert!(
+            index < children.len(),
+            "scheduler child index is out of bounds"
+        );
+        let removed = children.swap_remove(index);
+        assert!(
+            std::ptr::eq(removed.as_ref(), child),
+            "scheduler child index points to another node"
+        );
+        child.parent_index.set(UNATTACHED_CHILD);
+        if let Some(moved) = children.get(index) {
+            moved.parent_index.set(index);
+        }
     }
 
     /// Wait for completion; not cancellable (callers wrap it when needed).
@@ -149,6 +201,7 @@ enum Entry {
 
 pub(crate) struct Scheduler {
     root: RefCell<Rc<Node>>,
+    detached_jobs: RefCell<Vec<Rc<Node>>>,
     stacks: RefCell<HashMap<usize, Vec<Entry>>>,
     runner: RefCell<Option<Function>>,
     running: Cell<bool>,
@@ -159,7 +212,8 @@ pub(crate) struct Scheduler {
 impl Scheduler {
     fn new() -> Self {
         Self {
-            root: RefCell::new(Node::new(Kind::Root, None, CancellationToken::new())),
+            root: RefCell::new(Node::new(Kind::Root, None, CancellationToken::new(), None)),
+            detached_jobs: RefCell::default(),
             stacks: RefCell::default(),
             runner: RefCell::default(),
             running: Cell::new(false),
@@ -170,6 +224,10 @@ impl Scheduler {
 
     fn root(&self) -> Rc<Node> {
         self.root.borrow().clone()
+    }
+
+    fn detached_jobs(&self) -> Vec<Rc<Node>> {
+        self.detached_jobs.borrow().clone()
     }
 
     fn top(&self, key: usize) -> Entry {
@@ -249,19 +307,23 @@ pub async fn cancellable<F: Future>(lua: &Lua, future: F) -> Option<F::Output> {
     }
 }
 
-/// Cancel every job launched outside a scope (the root's children).
+/// Cancel every root child and standalone supervisor job.
 ///
 /// Hosts call this before returning from `Runtime::run` to shut background
 /// jobs down instead of waiting for them.
 pub fn cancel_jobs(lua: &Lua) {
     if let Ok(s) = scheduler(lua) {
         s.root().token.cancel();
+        for job in s.detached_jobs() {
+            job.token.cancel();
+        }
     }
 }
 
 /// Receives a failure nobody else will see: the error value of a job started
-/// with `launch` that failed in a supervisor scope (`supervisor_scope` or the
-/// implicit root of `Runtime::run`). Cancellation never reaches it.
+/// with `launch` that failed in a supervisor scope (`supervisor_scope`, a
+/// standalone supervisor job, or the implicit root of `Runtime::run`).
+/// Cancellation never reaches it.
 pub type UnhandledHandler = Rc<dyn Fn(&Lua, Value)>;
 
 /// Replace the handler for unhandled job failures, like kotlinx.coroutines'
@@ -289,7 +351,7 @@ pub(crate) fn install(lua: &Lua) -> Result<Table> {
 /// Start a fresh root for one `Runtime::run`.
 pub(crate) fn open_root(lua: &Lua) -> Result<Rc<Node>> {
     let s = scheduler(lua)?;
-    let root = Node::new(Kind::Root, None, CancellationToken::new());
+    let root = Node::new(Kind::Root, None, CancellationToken::new(), None);
     *s.root.borrow_mut() = root.clone();
     s.running.set(true);
     Ok(root)
@@ -298,7 +360,19 @@ pub(crate) fn open_root(lua: &Lua) -> Result<Rc<Node>> {
 /// Wait for the root's children, then stop accepting launches.
 pub(crate) async fn close_root(lua: &Lua, root: &Rc<Node>) -> Result<()> {
     root.wait_children().await;
-    scheduler(lua)?.running.set(false);
+    let s = scheduler(lua)?;
+    let detached = s.detached_jobs();
+    for job in &detached {
+        job.token.cancel();
+    }
+    for job in detached {
+        job.wait_children().await;
+        if !job.is_done() {
+            complete(lua, &job, Status::Cancelled, Value::Nil);
+        }
+    }
+    s.detached_jobs.borrow_mut().clear();
+    s.running.set(false);
     Ok(())
 }
 
@@ -317,7 +391,14 @@ fn is_cancellation(lua: &Lua, value: &Value) -> Result<bool> {
     })
 }
 
-fn spawn(lua: &Lua, parent: Rc<Node>, kind: Kind, body: Function) -> Result<AnyUserData> {
+fn spawn(
+    lua: &Lua,
+    parent: Rc<Node>,
+    kind: Kind,
+    body: Function,
+    coroutine_name: Option<String>,
+    lazy: bool,
+) -> Result<AnyUserData> {
     let s = scheduler(lua)?;
     if !s.running.get() {
         return Err(mlua::Error::runtime(
@@ -329,12 +410,21 @@ fn spawn(lua: &Lua, parent: Rc<Node>, kind: Kind, body: Function) -> Result<AnyU
         .borrow()
         .clone()
         .ok_or_else(|| mlua::Error::runtime("luastd.async: runner not set"))?;
-    let child = Node::new(kind, Some(&parent), parent.token.child_token());
+    let child = Node::new(
+        kind,
+        Some(&parent),
+        parent.token.child_token(),
+        coroutine_name,
+    );
+    if lazy {
+        child.lazy.set(true);
+        child.started.set(false);
+    }
     if parent.is_done() {
         // A finished scope cannot own new work (as in kotlinx.coroutines).
         child.token.cancel();
     }
-    parent.children.borrow_mut().push(child.clone());
+    Node::add_child(&parent, child.clone());
 
     let thread = lua.create_thread(runner)?;
     let key = thread.to_pointer() as usize;
@@ -344,7 +434,23 @@ fn spawn(lua: &Lua, parent: Rc<Node>, kind: Kind, body: Function) -> Result<AnyU
     let ud = handle(lua, child.clone())?;
     let future = thread.into_async::<()>((ud.clone(), body))?;
     let lua = lua.clone();
+    let node_for_wait = child.clone();
     tokio::task::spawn_local(async move {
+        // Lazy jobs wait for `start_job` (or cancellation) before running.
+        if node_for_wait.lazy.get() && !node_for_wait.started.get() {
+            tokio::select! {
+                biased;
+                () = node_for_wait.token.cancelled() => {}
+                () = node_for_wait.start_notify.notified() => {}
+            }
+            if node_for_wait.token.is_cancelled() && !node_for_wait.started.get() {
+                if !node_for_wait.is_done() {
+                    complete(&lua, &node_for_wait, Status::Cancelled, Value::Nil);
+                }
+                s.stacks.borrow_mut().remove(&key);
+                return;
+            }
+        }
         let outcome = future.await;
         if !child.is_done() {
             // The runner settles every job itself; this only guards against
@@ -370,6 +476,13 @@ async fn settle(lua: &Lua, node: &Rc<Node>, ok: bool, error: Value) -> Result<(S
     if !ok && !body_cancelled {
         node.token.cancel();
     }
+    // Unstarted lazy children never run; cancel them so the scope can finish.
+    for child in node.children.borrow().clone() {
+        if child.lazy.get() && !child.started.get() && !child.is_done() {
+            child.token.cancel();
+            complete(lua, &child, Status::Cancelled, Value::Nil);
+        }
+    }
     node.wait_children().await;
     if let Some(timer) = node.timer.borrow_mut().take() {
         timer.abort();
@@ -390,12 +503,12 @@ async fn settle(lua: &Lua, node: &Rc<Node>, ok: bool, error: Value) -> Result<(S
 
 /// Record the result, tell the parent, and wake joiners.
 fn complete(lua: &Lua, node: &Rc<Node>, status: Status, value: Value) {
+    if node.is_done() {
+        return;
+    }
     *node.result.borrow_mut() = Some((status, value.clone()));
     if let Some(parent) = node.parent.as_ref().and_then(Weak::upgrade) {
-        parent
-            .children
-            .borrow_mut()
-            .retain(|c| !Rc::ptr_eq(c, node));
+        Node::remove_child(&parent, node);
         if node.kind.is_job() && status == Status::Failed {
             if !parent.supervisor() {
                 parent.child_failure.borrow_mut().get_or_insert(value);
@@ -406,6 +519,27 @@ fn complete(lua: &Lua, node: &Rc<Node>, status: Status, value: Value) {
         }
     }
     node.done.notify_waiters();
+}
+
+fn start_job(lua: &Lua, node: Rc<Node>) -> Result<bool> {
+    if node.is_done() {
+        return Ok(false);
+    }
+    if node.token.is_cancelled() {
+        if node.lazy.get() && !node.started.get() && !node.is_done() {
+            complete(lua, &node, Status::Cancelled, Value::Nil);
+        }
+        return Ok(false);
+    }
+    if node.started.get() {
+        return Ok(false);
+    }
+    if !node.lazy.get() {
+        return Ok(false);
+    }
+    node.started.set(true);
+    node.start_notify.notify_waiters();
+    Ok(true)
 }
 
 fn report_unhandled(lua: &Lua, value: &Value) {
@@ -443,10 +577,14 @@ fn kind(name: &str) -> Result<Kind> {
 /// Channel state: a bounded queue; `cap == 0` is a rendezvous.
 struct ChannelState {
     cap: usize,
+    overflow: &'static str,
     queue: RefCell<VecDeque<(u64, Value)>>,
     next_seq: Cell<u64>,
     taken: Cell<u64>,
+    waiting_receivers: Cell<usize>,
     closed: Cell<bool>,
+    /// The error `close` was called with, if any.
+    closed_reason: RefCell<Option<Value>>,
     /// `cancel()`d: closed, buffer dropped, senders are cancelled.
     cancelled: Cell<bool>,
     changed: Notify,
@@ -457,17 +595,126 @@ pub(crate) struct Channel(Rc<ChannelState>);
 
 impl UserData for Channel {}
 
+struct WaitingReceiver(Rc<ChannelState>);
+
+impl Drop for WaitingReceiver {
+    fn drop(&mut self) {
+        self.0
+            .waiting_receivers
+            .set(self.0.waiting_receivers.get() - 1);
+    }
+}
+
+/// Semaphore state: a counting permit pool backed by tokio's fair semaphore.
+#[derive(Clone)]
+pub(crate) struct Semaphore(Rc<SemaphoreState>);
+
+pub(crate) struct SemaphoreState {
+    max: usize,
+    inner: std::sync::Arc<tokio::sync::Semaphore>,
+}
+
+impl Semaphore {
+    pub(crate) fn new(permits: usize, acquired: usize) -> Result<Self> {
+        if permits == 0 {
+            return Err(crate::errors::LuaError::new(
+                "InvalidArgument",
+                "semaphore needs at least 1 permit",
+            )
+            .into());
+        }
+        if acquired > permits {
+            return Err(crate::errors::LuaError::new(
+                "InvalidArgument",
+                "acquiredPermits out of range",
+            )
+            .into());
+        }
+        let inner = std::sync::Arc::new(tokio::sync::Semaphore::new(permits));
+        for _ in 0..acquired {
+            let permit = inner.try_acquire().map_err(|_| {
+                mlua::Error::from(crate::errors::LuaError::new(
+                    "InvalidArgument",
+                    "acquiredPermits out of range",
+                ))
+            })?;
+            std::mem::forget(permit);
+        }
+        Ok(Self(Rc::new(SemaphoreState {
+            max: permits,
+            inner,
+        })))
+    }
+}
+
+impl UserData for Semaphore {}
+
 impl Channel {
-    fn new(cap: usize) -> Self {
+    fn new(cap: usize, overflow: &'static str) -> Self {
         Self(Rc::new(ChannelState {
             cap,
+            overflow,
             queue: RefCell::default(),
             next_seq: Cell::new(0),
             taken: Cell::new(0),
+            waiting_receivers: Cell::new(0),
             closed: Cell::new(false),
+            closed_reason: RefCell::default(),
             cancelled: Cell::new(false),
             changed: Notify::new(),
         }))
+    }
+
+    /// `"ok"`, `"full"` or `"closed"`; never waits for room.
+    fn try_send(&self, value: Value) -> &'static str {
+        let state = &self.0;
+        if state.cancelled.get() || state.closed.get() {
+            return "closed";
+        }
+        if state.cap == 0 && state.overflow == "suspend" && state.waiting_receivers.get() == 0 {
+            return "full";
+        }
+        let len = state.queue.borrow().len();
+        if len < state.cap.max(1) {
+            let seq = state.next_seq.get();
+            state.next_seq.set(seq + 1);
+            state.queue.borrow_mut().push_back((seq, value));
+            state.changed.notify_waiters();
+            "ok"
+        } else if state.overflow == "drop_latest" {
+            let seq = state.next_seq.get();
+            state.next_seq.set(seq + 1);
+            state.queue.borrow_mut().push_back((seq, value));
+            state.queue.borrow_mut().pop_back();
+            state.changed.notify_waiters();
+            "ok"
+        } else if matches!(state.overflow, "conflated" | "drop_oldest") {
+            let seq = state.next_seq.get();
+            state.next_seq.set(seq + 1);
+            state.queue.borrow_mut().push_back((seq, value));
+            state.queue.borrow_mut().pop_front();
+            state.changed.notify_waiters();
+            "ok"
+        } else {
+            "full"
+        }
+    }
+
+    fn try_receive(&self) -> (&'static str, Value) {
+        let state = &self.0;
+        if state.cancelled.get() {
+            return ("cancelled", Value::Nil);
+        }
+        if let Some((seq, value)) = state.queue.borrow_mut().pop_front() {
+            state.taken.set(state.taken.get().max(seq + 1));
+            state.changed.notify_waiters();
+            return ("value", value);
+        }
+        if state.closed.get() {
+            ("closed", Value::Nil)
+        } else {
+            ("empty", Value::Nil)
+        }
     }
 
     /// `"ok"`, `"closed"`, `"cancelled"` (the caller was) or
@@ -483,10 +730,27 @@ impl Channel {
                 if state.closed.get() {
                     return None;
                 }
-                if state.queue.borrow().len() < state.cap.max(1) {
+                let len = state.queue.borrow().len();
+                if len < state.cap.max(1) {
                     let seq = state.next_seq.get();
                     state.next_seq.set(seq + 1);
                     state.queue.borrow_mut().push_back((seq, value));
+                    state.changed.notify_waiters();
+                    return Some(Some(seq));
+                }
+                if state.overflow == "drop_latest" {
+                    let seq = state.next_seq.get();
+                    state.next_seq.set(seq + 1);
+                    state.queue.borrow_mut().push_back((seq, value));
+                    state.queue.borrow_mut().pop_back();
+                    state.changed.notify_waiters();
+                    return Some(Some(seq));
+                }
+                if matches!(state.overflow, "conflated" | "drop_oldest") {
+                    let seq = state.next_seq.get();
+                    state.next_seq.set(seq + 1);
+                    state.queue.borrow_mut().push_back((seq, value));
+                    state.queue.borrow_mut().pop_front();
                     state.changed.notify_waiters();
                     return Some(Some(seq));
                 }
@@ -500,6 +764,9 @@ impl Channel {
             Some(Some(Some(seq))) => seq,
         };
         if state.cap > 0 {
+            return "ok";
+        }
+        if state.overflow != "suspend" {
             return "ok";
         }
         // Rendezvous: wait until a receiver took this value.
@@ -541,7 +808,12 @@ impl Channel {
                 if state.closed.get() {
                     return None;
                 }
+                state
+                    .waiting_receivers
+                    .set(state.waiting_receivers.get() + 1);
+                let waiting_receiver = WaitingReceiver(state.clone());
                 notified.await;
+                drop(waiting_receiver);
             }
         };
         let raced = async {
@@ -558,7 +830,13 @@ impl Channel {
         }
     }
 
-    fn close(&self) {
+    fn close(&self, reason: Option<Value>) {
+        if self.0.closed.get() {
+            return;
+        }
+        if let Some(reason) = reason {
+            *self.0.closed_reason.borrow_mut() = Some(reason);
+        }
         self.0.closed.set(true);
         self.0.changed.notify_waiters();
     }
@@ -611,22 +889,83 @@ fn core(lua: &Lua) -> Result<Table> {
     core.set(
         "spawn",
         lua.create_function(
-            |lua, (parent, name, body): (AnyUserData, String, Function)| {
-                spawn(lua, node(&parent)?, kind(&name)?, body)
+            |lua,
+             (parent, name, body, coroutine_name, lazy): (
+                AnyUserData,
+                String,
+                Function,
+                Option<String>,
+                Option<bool>,
+            )| {
+                spawn(
+                    lua,
+                    node(&parent)?,
+                    kind(&name)?,
+                    body,
+                    coroutine_name,
+                    lazy.unwrap_or(false),
+                )
             },
         )?,
     )?;
     core.set(
-        "enter",
-        lua.create_function(|lua, name: String| {
+        "spawn_lazy",
+        lua.create_function(
+            |lua,
+             (parent, name, body, coroutine_name): (
+                AnyUserData,
+                String,
+                Function,
+                Option<String>,
+            )| {
+                spawn(
+                    lua,
+                    node(&parent)?,
+                    kind(&name)?,
+                    body,
+                    coroutine_name,
+                    true,
+                )
+            },
+        )?,
+    )?;
+    core.set(
+        "start_job",
+        lua.create_function(|lua, ud: AnyUserData| start_job(lua, node(&ud)?))?,
+    )?;
+    core.set(
+        "supervisor_job",
+        lua.create_function(|lua, ()| {
             let s = scheduler(lua)?;
-            let key = thread_key(lua);
-            let parent = s.current_node(key);
-            let token = s.current_token(key).child_token();
-            let scope = Node::new(kind(&name)?, Some(&parent), token);
-            s.push(key, Entry::Node(scope.clone()));
-            handle(lua, scope)
+            let job = Node::new(Kind::Supervisor, None, CancellationToken::new(), None);
+            s.detached_jobs.borrow_mut().push(job.clone());
+            handle(lua, job)
         })?,
+    )?;
+    core.set(
+        "enter",
+        lua.create_function(
+            |lua, (name, coroutine_name, parent): (String, Option<String>, Option<AnyUserData>)| {
+                let s = scheduler(lua)?;
+                let key = thread_key(lua);
+                let parent = parent.map(|parent| node(&parent)).transpose()?;
+                let (parent, token) = match parent {
+                    Some(parent) => (parent.clone(), parent.token.child_token()),
+                    None => (s.current_node(key), s.current_token(key).child_token()),
+                };
+                let scope = Node::new(kind(&name)?, Some(&parent), token, coroutine_name);
+                if parent.is_done() {
+                    scope.token.cancel();
+                }
+                Node::add_child(&parent, scope.clone());
+                s.push(key, Entry::Node(scope.clone()));
+                handle(lua, scope)
+            },
+        )?,
+    )?;
+    core.set(
+        "coroutine_name",
+        lua.create_function(|_, ud: AnyUserData| Ok(node(&ud)?.coroutine_name.clone()))?,
     )?;
     core.set(
         "timeout",
@@ -690,8 +1029,25 @@ fn core(lua: &Lua) -> Result<Table> {
     )?;
     core.set(
         "cancel",
-        lua.create_function(|_, ud: AnyUserData| {
-            node(&ud)?.token.cancel();
+        lua.create_function(|lua, ud: AnyUserData| {
+            let target = node(&ud)?;
+            target.token.cancel();
+            if target.lazy.get() && !target.started.get() && !target.is_done() {
+                complete(lua, &target, Status::Cancelled, Value::Nil);
+            }
+            if target.kind == Kind::Supervisor && target.parent.is_none() {
+                if target.children.borrow().is_empty() {
+                    complete(lua, &target, Status::Cancelled, Value::Nil);
+                } else if scheduler(lua)?.running.get() {
+                    let lua = lua.clone();
+                    tokio::task::spawn_local(async move {
+                        target.wait_children().await;
+                        if !target.is_done() {
+                            complete(&lua, &target, Status::Cancelled, Value::Nil);
+                        }
+                    });
+                }
+            }
             Ok(())
         })?,
     )?;
@@ -710,9 +1066,12 @@ fn core(lua: &Lua) -> Result<Table> {
         "state",
         lua.create_function(|_, ud: AnyUserData| {
             let node = node(&ud)?;
+            let status_cancelled =
+                matches!(node.result.borrow().as_ref(), Some((Status::Cancelled, _)));
+            let cancelled = node.token.is_cancelled() || status_cancelled;
             Ok((
-                !node.is_done() && !node.token.is_cancelled(),
-                node.token.is_cancelled(),
+                !node.is_done() && !cancelled && node.started.get(),
+                cancelled,
                 node.is_done(),
             ))
         })?,
@@ -760,13 +1119,28 @@ fn core(lua: &Lua) -> Result<Table> {
         })?,
     )?;
     core.set(
+        "await_cancellation",
+        lua.create_async_function(|lua, ()| async move {
+            let _ = cancellable(&lua, std::future::pending::<()>()).await;
+            Ok(())
+        })?,
+    )?;
+    core.set(
         "now_ms",
         lua.create_function(|lua, ()| Ok(scheduler(lua)?.epoch.elapsed().as_secs_f64() * 1000.0))?,
     )?;
 
     core.set(
         "channel",
-        lua.create_function(|_, cap: usize| Ok(Channel::new(cap)))?,
+        lua.create_function(|_, (cap, overflow): (usize, String)| {
+            let overflow: &'static str = match overflow.as_str() {
+                "drop_oldest" => "drop_oldest",
+                "drop_latest" => "drop_latest",
+                "conflated" => "conflated",
+                _ => "suspend",
+            };
+            Ok(Channel::new(cap, overflow))
+        })?,
     )?;
     core.set(
         "send",
@@ -776,22 +1150,56 @@ fn core(lua: &Lua) -> Result<Table> {
         })?,
     )?;
     core.set(
+        "try_send",
+        lua.create_function(
+            |_, (ch, value): (UserDataRef<Channel>, Value)| Ok(ch.try_send(value)),
+        )?,
+    )?;
+    core.set(
+        "try_receive",
+        lua.create_function(|lua, ch: UserDataRef<Channel>| {
+            let (status, value) = ch.try_receive();
+            let reason = if status == "closed" {
+                ch.0.closed_reason.borrow().clone().unwrap_or(Value::Nil)
+            } else {
+                Value::Nil
+            };
+            Ok(MultiValue::from_vec(vec![
+                Value::String(lua.create_string(status)?),
+                value,
+                reason,
+            ]))
+        })?,
+    )?;
+    core.set(
+        "close_reason",
+        lua.create_function(|_, ch: UserDataRef<Channel>| {
+            Ok(ch.0.closed_reason.borrow().clone().unwrap_or(Value::Nil))
+        })?,
+    )?;
+    core.set(
         "receive",
         lua.create_async_function(|lua, (ch, timeout): (UserDataRef<Channel>, Option<f64>)| {
             let ch = ch.clone();
             async move {
                 let (status, value) = ch.receive(&lua, timeout.map(duration)).await;
+                let reason = if status == "closed" {
+                    ch.0.closed_reason.borrow().clone().unwrap_or(Value::Nil)
+                } else {
+                    Value::Nil
+                };
                 Ok(MultiValue::from_vec(vec![
                     Value::String(lua.create_string(status)?),
                     value,
+                    reason,
                 ]))
             }
         })?,
     )?;
     core.set(
         "close",
-        lua.create_function(|_, ch: UserDataRef<Channel>| {
-            ch.close();
+        lua.create_function(|_, (ch, reason): (UserDataRef<Channel>, Option<Value>)| {
+            ch.close(reason);
             Ok(())
         })?,
     )?;
@@ -805,6 +1213,72 @@ fn core(lua: &Lua) -> Result<Table> {
     core.set(
         "is_closed",
         lua.create_function(|_, ch: UserDataRef<Channel>| Ok(ch.0.closed.get()))?,
+    )?;
+    core.set(
+        "is_closed_for_receive",
+        lua.create_function(|_, ch: UserDataRef<Channel>| {
+            Ok(ch.0.closed.get() && ch.0.queue.borrow().is_empty())
+        })?,
+    )?;
+    core.set(
+        "is_empty",
+        lua.create_function(|_, ch: UserDataRef<Channel>| {
+            Ok(!ch.0.closed.get() && ch.0.queue.borrow().is_empty())
+        })?,
+    )?;
+    core.set(
+        "semaphore",
+        lua.create_function(|_, (permits, acquired): (usize, Option<usize>)| {
+            Semaphore::new(permits, acquired.unwrap_or(0))
+        })?,
+    )?;
+    core.set(
+        "acquire",
+        lua.create_async_function(|lua, sem: UserDataRef<Semaphore>| {
+            let sem = sem.clone();
+            async move {
+                let permit = sem.0.inner.clone().acquire_owned();
+                match cancellable(&lua, permit).await {
+                    Some(Ok(permit)) => {
+                        std::mem::forget(permit);
+                        Ok(())
+                    }
+                    Some(Err(_)) => Err(mlua::Error::runtime("semaphore closed")),
+                    None => Err(crate::errors::LuaError::cancelled().into()),
+                }
+            }
+        })?,
+    )?;
+    core.set(
+        "release",
+        lua.create_function(|_, sem: UserDataRef<Semaphore>| {
+            let state = &sem.0;
+            if state.inner.available_permits() >= state.max {
+                return Err(crate::errors::LuaError::new(
+                    "IllegalState",
+                    "The number of released permits cannot be greater than the number of permits",
+                )
+                .into());
+            }
+            state.inner.add_permits(1);
+            Ok(())
+        })?,
+    )?;
+    core.set(
+        "try_acquire",
+        lua.create_function(
+            |_, sem: UserDataRef<Semaphore>| match sem.0.inner.try_acquire() {
+                Ok(permit) => {
+                    std::mem::forget(permit);
+                    Ok(true)
+                }
+                Err(_) => Ok(false),
+            },
+        )?,
+    )?;
+    core.set(
+        "available_permits",
+        lua.create_function(|_, sem: UserDataRef<Semaphore>| Ok(sem.0.inner.available_permits()))?,
     )?;
     Ok(core)
 }

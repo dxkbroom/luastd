@@ -33,6 +33,19 @@ fn install_async(lua: &Lua) -> Result<()> {
     )
 }
 
+/// Install `luastd.flow`.
+fn install_flow(lua: &Lua) -> Result<()> {
+    let module: Table = lua
+        .load(include_str!("flow.lua"))
+        .set_name("=luastd.flow")
+        .eval()?;
+    install_preload(
+        lua,
+        "luastd.flow",
+        lua.create_function(move |_, ()| Ok(module.clone()))?,
+    )
+}
+
 type EffectLoader = fn(&Lua, &PermissionsContainer) -> Result<Table>;
 
 /// A sandboxed Lua state with the floor installed, and the current-thread
@@ -83,6 +96,7 @@ impl Runtime {
             }
         }
         install_async(&lua)?;
+        install_flow(&lua)?;
         sandbox::hide_package(&lua, options)?;
 
         let tokio = tokio::runtime::Builder::new_current_thread()

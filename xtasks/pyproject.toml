@@ -1,0 +1,18 @@
+[project]
+name = "luastd-xtasks"
+version = "0.1.0"
+description = "Python support tools for the luastd repository"
+requires-python = ">=3.10"
+dependencies = ["rich>=14,<15", "tree-sitter-language-pack>=1.23.1,<1.24"]
+
+[dependency-groups]
+dev = ["basedpyright>=1.29,<2", "ruff>=0.11,<1"]
+
+[tool.basedpyright]
+typeCheckingMode = "off"
+pythonVersion = "3.10"
+include = ["lib", "tasks", "tests"]
+extraPaths = ["lib"]
+
+[tool.uv]
+package = false

@@ -43,7 +43,7 @@ describe("AwaitTest", function ()
         end)
     )
 
-    -- todo: no `CoroutineStart.LAZY` or lazy deferred start operation.
+    -- defer: no `CoroutineStart.LAZY` or lazy deferred start operation.
     pending("testAwaitAllLazy")
 
     it(
@@ -172,11 +172,11 @@ describe("AwaitTest", function ()
         end)
     )
 
-    -- todo: no CompletableDeferred or externally completed deferreds.
+    -- defer: no CompletableDeferred or externally completed deferreds.
     pending("testAwaitAllFullyCompleted")
-    -- todo: no CompletableDeferred or collection-based `awaitAll` extension.
+    -- defer: no CompletableDeferred or collection-based `awaitAll` extension.
     pending("testAwaitOnSet")
-    -- todo: no CompletableDeferred or externally completed failed deferreds.
+    -- defer: no CompletableDeferred or externally completed failed deferreds.
     pending("testAwaitAllFullyCompletedExceptionally")
 
     it(
@@ -235,7 +235,7 @@ describe("AwaitTest", function ()
         end)
     )
 
-    -- todo: no lazy launch or `CoroutineStart.LAZY`.
+    -- defer: no lazy launch or `CoroutineStart.LAZY`.
     pending("testJoinAllLazy")
 
     -- adapted: join each job; as in Kotlin, joining does not rethrow a
@@ -319,9 +319,9 @@ describe("AwaitTest", function ()
         end)
     )
 
-    -- todo: no CompletableDeferred or Deferred delegation/wrapper mechanism.
+    -- defer: no CompletableDeferred or Deferred delegation/wrapper mechanism.
     pending("testAwaitAllDelegates")
-    -- todo: no CompletableDeferred, Deferred delegation, or cancellable
+    -- defer: no CompletableDeferred, Deferred delegation, or cancellable
     -- deferred interface to wrap.
     pending("testCancelAwaitAllDelegate")
 end)

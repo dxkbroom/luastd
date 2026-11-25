@@ -3,7 +3,8 @@ resolver = "3"
 members = ["crates/luastd", "crates/luastd_lua", "crates/luastd_runtime"]
 # luastd_lua forces mlua's `module` feature; keep it out of plain `cargo build`
 # and `cargo test` so feature unification does not leak `module` into test
-# binaries. lux builds it with `-p luastd_lua`.
+# binaries. lux builds it with `-p luastd_lua`. tinyvi is a standalone example
+# leaf (its own workspace) so it does not join feature unification here.
 default-members = ["crates/luastd", "crates/luastd_runtime"]
 
 [workspace.package]

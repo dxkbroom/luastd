@@ -1,5 +1,5 @@
 -- Port of kotlinx.coroutines' CoroutineScopeTest (see AGENTS.md, "Kotlin test
--- ports"). Context and dispatcher APIs are outside luastd's coroutine scope.
+-- ports"). Dispatcher APIs are outside luastd's coroutine model.
 ---@diagnostic disable: await-in-sync
 
 local async = require("luastd.async")
@@ -107,27 +107,28 @@ describe("CoroutineScopeTest", function ()
     -- the Kotlin test catches the later exception after cancelling its job.
     pending("testCoroutineScopeCancellationVsException")
 
-    -- not-applicable: luastd does not expose CoroutineContext or dispatchers.
+    -- not-applicable: luastd does not expose a configurable dispatcher.
     pending("testLaunchContainsDefaultDispatcher")
-    -- not-applicable: no CoroutineContext or dispatcher composition API.
+    -- not-applicable: luastd does not expose dispatcher composition.
     pending("testNewCoroutineContextDispatcher")
-    -- not-applicable: no CoroutineContext or dispatcher composition API.
+    -- not-applicable: luastd does not expose dispatcher composition.
     pending("testScopePlusContext")
 
     it(
         "testIncompleteScopeState",
         runtest(function ()
-            local scope
-            async.scope(function (current)
-                scope = current
+            local job
+            async.scope(function (scope)
+                job = scope:coroutine_context():job()
             end)
-            assert.is_true(scope:is_completed())
-            assert.is_false(scope:is_active())
-            assert.is_false(scope:is_cancelled())
+            async.join(job)
+            assert.is_true(job:is_completed())
+            assert.is_false(job:is_active())
+            assert.is_false(job:is_cancelled())
         end)
     )
 
-    -- not-applicable: this checks `CoroutineContext.isActive` with no Job; luastd exposes
-    -- the current scope directly and has no CoroutineContext object.
+    -- not-applicable: luastd context activity is queried through its Job; it has no
+    -- context-level isActive API for a context without a Job.
     pending("testIsActiveWithoutJob")
 end)

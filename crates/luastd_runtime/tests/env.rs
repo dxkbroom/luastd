@@ -130,15 +130,20 @@ fn set_never_touches_the_process() {
         .effect::<Env>()
         .build()
         .unwrap();
-    rt.lua()
-        .load(r#"require("luastd.env").set_sync("LUASTD_SPEC_OVERLAY", "1")"#)
-        .exec()
-        .unwrap();
+    rt.run(async |lua| {
+        lua.load(r#"require("luastd.env").set("LUASTD_SPEC_OVERLAY", "1")"#)
+            .exec_async()
+            .await?;
+        Ok(())
+    })
+    .unwrap();
     assert!(std::env::var_os("LUASTD_SPEC_OVERLAY").is_none());
     let seen: String = rt
-        .lua()
-        .load(r#"return require("luastd.env").get_sync("LUASTD_SPEC_OVERLAY")"#)
-        .eval()
+        .run(async |lua| {
+            lua.load(r#"return require("luastd.env").get("LUASTD_SPEC_OVERLAY")"#)
+                .eval_async()
+                .await
+        })
         .unwrap();
     assert_eq!(seen, "1");
 }
@@ -160,15 +165,14 @@ fn a_pending_prompt_is_a_cancellation_point() {
         .effect::<Env>()
         .build()
         .unwrap();
-    let (kind, still_undecided): (String, bool) = rt
+    let kind: String = rt
         .run(async |lua| {
             lua.load(
                 r#"
                 local async, env = require("luastd.async"), require("luastd.env")
                 local ok, err = pcall(async.with_timeout, 10, function () return env.get("HOME") end)
                 assert(not ok)
-                local _, sync_err = pcall(env.get_sync, "HOME")
-                return err.kind, sync_err.message:find("use the async variant", 1, true) ~= nil
+                return err.kind
                 "#,
             )
             .eval_async()
@@ -176,8 +180,4 @@ fn a_pending_prompt_is_a_cancellation_point() {
         })
         .unwrap();
     assert_eq!(kind, "Timeout");
-    assert!(
-        still_undecided,
-        "an abandoned prompt must not record a decision"
-    );
 }

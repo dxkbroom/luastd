@@ -146,27 +146,6 @@ fn question<D: Descriptor>(descriptor: &D) -> String {
     }
 }
 
-/// Check `descriptor` without prompting: `prompt` counts as denied.
-///
-/// For the `*_sync` functions, which must not wait for the host.
-pub(crate) fn check_now<D: Descriptor>(
-    container: &PermissionsContainer,
-    descriptor: D,
-) -> Result<(), LuaError> {
-    if descriptor.query(container) == PermissionState::Prompt {
-        return Err(denied(
-            &descriptor,
-            format!(
-                "{} has not been granted; it needs a prompt, use the async variant",
-                question(&descriptor)
-            ),
-        ));
-    }
-    descriptor
-        .check(container)
-        .map_err(|message| denied(&descriptor, message))
-}
-
 /// Check `descriptor`, awaiting the host's [`Prompter`] when deno would prompt.
 pub(crate) async fn check<D: Descriptor>(
     lua: &Lua,

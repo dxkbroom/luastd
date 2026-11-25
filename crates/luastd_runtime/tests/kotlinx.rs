@@ -135,6 +135,7 @@ kotlinx! {
     LintTest,
     MapNotNullTest,
     MapTest,
+    MergeTest,
     MutexTest,
     NonCancellableTest,
     OnCompletionTest,

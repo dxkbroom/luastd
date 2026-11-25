@@ -34,7 +34,7 @@ end
 
 --- Declare a test that is not run; it is counted as skipped. As in busted, a
 --- function argument is ignored. Kotlin ports put the reason in a
---- `-- n/a:` or `-- todo:` comment above it (AGENTS.md).
+--- `-- not-applicable:`, `-- defer:`, or `-- todo:` comment above it (AGENTS.md).
 local function pending(name)
     table.insert(tests, { name = table.concat(prefix, " ") .. " " .. name, pending = true })
 end
