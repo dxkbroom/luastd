@@ -663,13 +663,81 @@ describe("SharedFlowTest", function ()
         end)
     )
 
-    -- defer: a structured TestException raised by on_subscription currently
-    -- reaches Flow:catch as a string, so the API loses luastd.Error identity.
-    pending("onSubscriptionThrows")
+    it(
+        "onSubscriptionThrows",
+        runtest(function (t)
+            t:expect(1)
+            local shared = flow.mutable_shared_flow(1)
+            assert.is_true(shared:try_emit("OK"))
+            assert.same({ "OK" }, shared.replay_cache)
+            local failure = require("luastd_test").TestException()
+            local received, caught = {}, false
+            shared:on_subscription(function ()
+                t:expect(2)
+                error(failure, 0)
+            end):catch(function (_, err)
+                assert.is_true(rawequal(failure, err))
+                t:expect(3)
+                caught = true
+            end):collect(function (value) table.insert(received, value) end)
+            assert.same({}, received)
+            assert.is_true(caught)
+            assert.is_equal(0, shared.subscription_count)
+            assert.same({ "OK" }, shared.replay_cache)
+            t:finish(4)
+        end)
+    )
 
-    -- defer: Flow has no on_subscription barrier, and SharedFlow exposes no
-    -- replay-cache view for verifying delivery to 100 staggered subscribers.
-    pending("testBigReplayManySubscribers")
+    -- adapted: use a subscription callback and scheduler polling instead of the
+    -- rendezvous barrier; assert every subscriber receives exactly 1..i before
+    -- the next emission. Cancel the oldest remaining subscriber at each even i.
+    it(
+        "testBigReplayManySubscribers",
+        runtest(function ()
+            local n = 100
+            local shared = flow.mutable_shared_flow(n)
+            local subscribers = {}
+
+            for value = 1, n do
+                shared:emit(value)
+                for _, subscriber in ipairs(subscribers) do
+                    while subscriber.last_received < value do async.yield() end
+                    assert.is_equal(value, subscriber.last_received)
+                end
+
+                local subscriber = { last_received = 0, subscribed = false }
+                subscriber.job = async.launch(function ()
+                    shared:on_subscription(function () subscriber.subscribed = true end)
+                        :collect(function (received)
+                            assert.is_equal(subscriber.last_received + 1, received)
+                            subscriber.last_received = received
+                        end)
+                end)
+                while not subscriber.subscribed do async.yield() end
+                while subscriber.last_received < value do async.yield() end
+                assert.is_equal(value, subscriber.last_received)
+                table.insert(subscribers, subscriber)
+
+                if value % 2 == 0 then
+                    local victim = table.remove(subscribers, 1)
+                    assert.is_equal(value, victim.last_received)
+                    victim.job:cancel()
+                    async.join(victim.job)
+                    while shared.subscription_count ~= #subscribers do async.yield() end
+                end
+            end
+
+            for _, subscriber in ipairs(subscribers) do
+                assert.is_equal(n, subscriber.last_received)
+                subscriber.job:cancel()
+            end
+            for _, subscriber in ipairs(subscribers) do async.join(subscriber.job) end
+            while shared.subscription_count ~= 0 do async.yield() end
+            local replay = {}
+            for value = 1, n do table.insert(replay, value) end
+            assert.same(replay, shared.replay_cache)
+        end)
+    )
 
     -- defer: SharedFlow lacks the bounded shared buffer and on_subscription
     -- barrier needed to verify delivery and removal across 100 subscribers.
