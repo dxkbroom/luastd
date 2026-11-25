@@ -1,7 +1,8 @@
 -- kotlin: kotlinx-coroutines-core/common/test/flow/sharing/StateFlowTest.kt@1.11.0
 local async = require("luastd.async")
 local flow = require("luastd.flow")
-local runtest = require("luastd_test").runtest
+local luastd_test = require("luastd_test")
+local runtest = luastd_test.runtest
 
 describe("StateFlowTest", function ()
     -- adapted: Lua nil cannot be retained in StateFlow's replay slot, so a
@@ -77,17 +78,96 @@ describe("StateFlowTest", function ()
         end)
     )
 
-    -- defer: Flow has no on_subscription operator for callbacks that run after
-    -- registration and before replay begins.
-    pending("testOnSubscription")
+    -- adapted: use scheduled collection and assert the actual on_start,
+    -- on_subscription, and replay values in order instead of Unconfined dispatch.
+    it(
+        "testOnSubscription",
+        runtest(function ()
+            local state = flow.mutable_state_flow("initial")
+            local observed = {}
+            local source = state
+                :on_subscription(function (emit)
+                    emit("collector->A")
+                    state:set_value("A")
+                end)
+                :on_subscription(function (emit)
+                    emit("collector->B")
+                    state:set_value("B")
+                end)
+                :on_start(function (emit)
+                    emit("collector->C")
+                    state:set_value("C")
+                end)
+                :on_start(function (emit)
+                    emit("collector->D")
+                    state:set_value("D")
+                end)
+                :on_each(function (value)
+                    table.insert(observed, value)
+                    if value == "B" then async.current_context():job():cancel() end
+                end)
+            local job = async.launch(function () source:collect(function () end) end)
+            async.join(job)
+            assert.same({ "collector->D", "collector->C", "collector->A", "collector->B", "B" }, observed)
+            assert.is_equal(0, state.subscription_count)
+        end)
+    )
 
-    -- defer: Flow has no on_subscription operator, so its pre-replay exception
-    -- and downstream catch behavior cannot be exercised.
-    pending("testOnSubscriptionThrows")
+    it(
+        "testOnSubscriptionThrows",
+        runtest(function ()
+            local state = flow.mutable_state_flow("initial")
+            local failure = luastd_test.TestException()
+            local caught = false
+            state:on_subscription(function () error(failure, 0) end)
+                :catch(function (_, err)
+                    assert.is_true(rawequal(failure, err))
+                    caught = true
+                end)
+                :collect(function () error("on_subscription should fail before replay", 0) end)
+            assert.is_true(caught)
+            assert.is_equal(0, state.subscription_count)
+        end)
+    )
 
-    -- defer: Flow has no on_subscription operator to model the two callback
-    -- layers and exception ordering in this case.
-    pending("testOnSubscriptionWithException")
+    -- adapted: model the ordered on_start and on_subscription emissions, then
+    -- assert that the second subscription-hook exception reaches catch unchanged.
+    it(
+        "testOnSubscriptionWithException",
+        runtest(function ()
+            local state = flow.mutable_state_flow("A")
+            local failure = luastd_test.TestException()
+            local observed = {}
+            local caught = false
+            state
+                :on_subscription(function (emit)
+                    emit("collector->A")
+                    state:set_value("A")
+                end)
+                :on_subscription(function (emit)
+                    emit("collector->B")
+                    state:set_value("B")
+                    error(failure, 0)
+                end)
+                :on_start(function (emit)
+                    emit("collector->C")
+                    state:set_value("C")
+                end)
+                :on_start(function (emit)
+                    emit("collector->D")
+                    state:set_value("D")
+                end)
+                :on_each(function (value) table.insert(observed, value) end)
+                :catch(function (_, err)
+                    assert.is_true(rawequal(failure, err))
+                    caught = true
+                end)
+                :collect(function () end)
+            assert.same({ "collector->D", "collector->C", "collector->A", "collector->B" }, observed)
+            assert.is_true(caught)
+            assert.is_equal(0, state.subscription_count)
+        end)
+    )
 
     -- defer: StateFlow operations do not fuse to the same object; the current
     -- Flow operators wrap their source or support only limited no-op behavior.
