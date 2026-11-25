@@ -33,31 +33,39 @@ describe("SharedFlowTest", function ()
         end)
     )
 
-    -- todo: port this Kotlin test in Lua.
+    -- defer: MutableSharedFlow has no reset_replay_cache operation; this case
+    -- verifies that clearing replay state does not unblock a buffered emitter.
     pending("testRendezvousSharedFlowReset")
 
-    -- todo: port this Kotlin test in Lua.
+    -- defer: the test emits Kotlin null through replay and checks replayCache;
+    -- Lua nil cannot currently be retained in the shared flow's replay buffer.
     pending("testReplay1SharedFlowBasic")
 
-    -- todo: port this Kotlin test in Lua.
+    -- defer: this case requires reset_replay_cache while a collector and
+    -- backpressured emitter are suspended; neither operation is exposed.
     pending("testReplay1")
 
-    -- todo: port this Kotlin test in Lua.
+    -- defer: reset_replay_cache and bounded-buffer suspension/overflow are
+    -- required to verify the replay and extra-capacity behavior here.
     pending("testReplay2Extra1")
 
-    -- todo: port this Kotlin test in Lua.
+    -- defer: this case needs on_subscription ordering and a bounded shared
+    -- buffer that suspends emit when a slow collector fills it.
     pending("testBufferNoReplayCancelWhileBuffering")
 
-    -- todo: port this Kotlin test in Lua.
+    -- defer: reset_replay_cache and replay-cache inspection are not exposed.
     pending("testRepeatedResetWithReplay")
 
-    -- todo: port this Kotlin test in Lua.
+    -- defer: shared emit does not implement rendezvous backpressure against a
+    -- slow subscriber, which this case needs before cancelling a blocked emitter.
     pending("testSynchronousSharedFlowEmitterCancel")
 
-    -- todo: port this Kotlin test in Lua.
+    -- defer: the test sweeps replay/buffer capacity combinations and checks
+    -- replayCache plus tryEmit suspension; those semantics are not implemented.
     pending("testDifferentBufferedFlowCapacities")
 
-    -- todo: port this Kotlin test in Lua.
+    -- defer: DROP_LATEST currently has best-effort channel sends and does not
+    -- preserve the shared flow's replay/buffer semantics under overflow.
     pending("testDropLatest")
 
     -- todo: port this Kotlin test in Lua.
