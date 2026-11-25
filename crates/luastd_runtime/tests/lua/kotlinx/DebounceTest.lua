@@ -229,9 +229,19 @@ describe("DebounceTest", function ()
     -- per-element timeout-selector overload.
     pending("testDebounceSelectorBasic")
 
-    -- defer: the current Flow:debounce(0) coalesces a synchronous burst to
-    -- its last value; Kotlin requires zero timeout to pass every value through.
-    pending("testZeroDebounceTime")
+    it("testZeroDebounceTime", runtest(function (t)
+        t:expect(1)
+        local source = flow.new(function (emit)
+            t:expect(3)
+            emit("A")
+            emit("B")
+            emit("C")
+            t:expect(4)
+        end)
+        t:expect(2)
+        assert.same({ "A", "B", "C" }, source:debounce(0):to_list())
+        t:finish(5)
+    end))
 
     -- not-applicable: the selector form is absent, including its zero-time case.
     pending("testZeroDebounceTimeSelector")

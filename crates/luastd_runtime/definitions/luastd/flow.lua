@@ -254,7 +254,8 @@ function Flow:take_while(predicate) end
 ---@return luastd.flow.Flow<U>
 function Flow:transform(fn) end
 
---- Emit a value only after `ms` ms without a newer one.
+--- Emit a value only after `ms` ms without a newer one. A zero timeout passes
+--- every value through immediately, without coalescing synchronous emissions.
 ---@param ms number
 ---@return luastd.flow.Flow<T>
 function Flow:debounce(ms) end

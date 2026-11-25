@@ -427,6 +427,7 @@ function Flow:transform(fn)
 end
 
 function Flow:debounce(ms)
+    if type(ms) == "number" and ms == 0 then return self end
     local up = self
     return new_flow(function (emit)
         async.scope(function (scope)
