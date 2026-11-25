@@ -1,46 +1,99 @@
+-- Port of kotlinx.coroutines' ShareInTest.
+
+local async = require("luastd.async")
+local flow = require("luastd.flow")
+local runtest = require("luastd_test").runtest
+
 -- kotlin: kotlinx-coroutines-core/common/test/flow/sharing/ShareInTest.kt@1.11.0
 describe("ShareInTest", function ()
-    -- defer: mutable_shared_flow can manually retain replay=0, but there is no
-    -- share_in operator to eagerly collect a cold source before subscribers join.
-    pending("testReplay0Eager")
+    -- adapted: the eager source is gated to finish before subscribers start;
+    -- replay_cache and subscription_count verify all subscribers miss the value.
+    it(
+        "testReplay0Eager",
+        runtest(function (t, scope)
+            t:expect(1)
+            local upstream_done = async.channel(0)
+            local source = flow.new(function (emit)
+                emit("OK")
+                upstream_done:send(true)
+            end)
+            local shared = source:share_in(scope, 0)
+            assert.is_true(upstream_done:receive())
+            async.yield()
+            assert.same({}, shared.replay_cache)
 
-    -- defer: no share_in or SharingStarted.Lazily policy exists to start the
-    -- source on the first subscriber and coordinate subscribers without replay.
+            local seen = {}
+            local subscribers = {}
+            for i = 1, 10 do
+                subscribers[i] = scope:launch(function ()
+                    shared:collect(function (value)
+                        seen[#seen + 1] = value
+                        t:expect_unreached()
+                    end)
+                end)
+            end
+            while shared.subscription_count < 10 do
+                async.yield()
+            end
+            assert.is_equal(10, shared.subscription_count)
+            assert.same({}, seen)
+            for _, subscriber in ipairs(subscribers) do
+                subscriber:cancel()
+                async.join(subscriber)
+            end
+            assert.is_equal(0, shared.subscription_count)
+            t:finish(2)
+        end)
+    )
+
+    -- defer: sharing starts eagerly only; there is no lazy strategy to wait for
+    -- the first subscriber before starting upstream.
     pending("testReplay0Lazy")
 
-    -- defer: the API has no lazy sharing job or subscriber barriers to test
-    -- replay=1 delivery across the first and later subscribers.
+    -- defer: replay=1 is supported, but lazy startup and first-subscriber
+    -- barriers are not available to distinguish the first subscriber.
     pending("testReplay1Lazy")
 
-    -- defer: share_in is absent, so upstream completion cannot be observed
-    -- while preserving a shared flow's replay cache.
-    pending("testUpstreamCompleted")
+    -- adapted: verify that eager upstream completion leaves its replay value
+    -- cached; a completion rendezvous replaces inspection of the sharing Job.
+    it(
+        "testUpstreamCompleted",
+        runtest(function (t, scope)
+            t:expect(1)
+            local completed = async.channel(0)
+            local source = flow.of_one("OK"):on_completion(function (err)
+                assert.is_nil(err)
+                completed:send(true)
+            end)
+            local shared = source:share_in(scope, 1)
+            assert.same({}, shared.replay_cache)
+            assert.is_true(completed:receive())
+            async.yield()
+            assert.same({ "OK" }, shared.replay_cache)
+            t:finish(2)
+        end)
+    )
 
-    -- defer: there is no sharing job whose completion state and failure can be
-    -- observed while the shared replay cache remains available.
+    -- defer: the case inspects a sharing Job's completion exception; share_in
+    -- returns a SharedFlow and exposes no Job handle.
     pending("testUpstreamFailed")
 
-    -- defer: the API has no SharingStarted.WhileSubscribed strategy or
-    -- subscription count tracking to start and stop upstream work.
+    -- defer: the runtime has no WhileSubscribed start/stop policy driven by
+    -- subscriber counts.
     pending("testWhileSubscribedBasic")
 
-    -- defer: there is no custom sharing strategy driven by subscription counts
-    -- to enforce a one-subscriber start threshold.
+    -- defer: custom subscription-count thresholds are not supported by the
+    -- eager-only share_in API.
     pending("testWhileSubscribedCustomAtLeast1")
-
-    -- defer: there is no subscription-count flow or sharing strategy to enforce
-    -- the custom two-subscriber start/stop threshold.
     pending("testWhileSubscribedCustomAtLeast2")
 
-    -- defer: the API lacks share_in, on_subscription, and lazy sharing startup,
-    -- so cancellation from the first subscription cannot test startup ordering.
+    -- defer: lazy startup after a cancelled first subscription is unsupported.
     pending("testShouldStart")
 
-    -- defer: state_in and lazy SharingStarted policies are absent, so scalar
-    -- source startup and initial-state/replayed-state sequencing are unsupported.
+    -- defer: state_in with lazy startup is not available.
     pending("testShouldStartScalar")
 
-    -- defer: state_in and the shared-flow first-suspension subscription
-    -- behavior are absent; mutable_shared_flow has no subscription hook.
+    -- defer: state_in and subscription-first-suspension behavior are not
+    -- represented by the current SharedFlow API.
     pending("testSubscriptionByFirstSuspensionInSharedFlow")
 end)
