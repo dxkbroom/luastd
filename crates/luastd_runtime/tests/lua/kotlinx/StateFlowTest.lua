@@ -28,10 +28,30 @@ describe("StateFlowTest", function ()
         end)
     )
 
-    -- defer: StateFlow:set_value currently publishes equal updates, and Lua
-    -- table equality is identity-based, so Kotlin's structural equality
-    -- conflation cannot be represented by the current API.
-    pending("testEqualsConflation")
+    -- adapted: Lua tables use a custom __eq metamethod to represent Kotlin's
+    -- data-class structural equality; scheduled yields let each distinct update
+    -- be observed before testing that an equal update is suppressed.
+    it(
+        "testEqualsConflation",
+        runtest(function ()
+            local data_mt = { __eq = function (left, right) return left.i == right.i end }
+            local function data(i) return setmetatable({ i = i }, data_mt) end
+            local state = flow.mutable_state_flow(data(0))
+            local values
+            local job = async.launch(function ()
+                values = state:take(3):map(function (value) return value.i end):to_list()
+            end)
+            while state.subscription_count == 0 do async.yield() end
+            async.yield()
+            state:set_value(data(1))
+            async.yield()
+            state:set_value(data(1))
+            async.yield()
+            state:set_value(data(2))
+            async.join(job)
+            assert.same({ 0, 1, 2 }, values)
+        end)
+    )
 
     -- adapted: update is the supported mutation API; collect its 0..10 values
     -- and sum them directly because this Flow surface has no sum terminal.

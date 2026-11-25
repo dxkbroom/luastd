@@ -1136,6 +1136,7 @@ function flow.mutable_state_flow(initial)
         return self.value
     end
     function state:set_value(v)
+        if self.value == v then return end
         self.value = v
         self._value = v
         sf._replay_buffer = { encode_shared(v) }
