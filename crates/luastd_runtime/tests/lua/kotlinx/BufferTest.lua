@@ -102,12 +102,18 @@ describe("BufferTest", function ()
             assert.is_equal(2, result[2])
         end)
     )
-    -- adapted: Flow:buffer has no BufferOverflow parameter, so the Kotlin-only
-    -- invalid CONFLATED/overflow combinations cannot be represented; verify
-    -- the invalid negative capacities supported by this API.
+    -- adapted: luastd raises structured InvalidArgument instead of Kotlin's
+    -- IllegalArgumentException; all invalid capacity/overflow combinations are checked.
     it("testFailsOnIllegalArguments", function ()
-        for _, cap in ipairs({ -3, -2147483648 }) do
-            local ok, err = pcall(function () flow.empty():buffer(cap):to_list() end)
+        local source = flow.empty()
+        local invalid = { -3, -2147483648 }
+        for _, capacity in ipairs(invalid) do
+            local ok, err = pcall(function () source:buffer(capacity) end)
+            assert.is_false(ok)
+            assert.is_equal("InvalidArgument", err.kind)
+        end
+        for _, overflow in ipairs({ "DROP_LATEST", "DROP_OLDEST" }) do
+            local ok, err = pcall(function () source:buffer(async.CONFLATED, overflow) end)
             assert.is_false(ok)
             assert.is_equal("InvalidArgument", err.kind)
         end
