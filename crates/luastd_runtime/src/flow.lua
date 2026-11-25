@@ -835,14 +835,22 @@ function Flow:zip(other, transform)
     local up = self
     return new_flow(function (emit)
         local a_vals, b_vals = {}, {}
-        up._run(function (v) table.insert(a_vals, v) end)
-        other._run(function (v) table.insert(b_vals, v) end)
-        local n = math.min(#a_vals, #b_vals)
+        local a_count, b_count = 0, 0
+        up._run(function (v)
+            a_count = a_count + 1
+            a_vals[a_count] = encode_shared(v)
+        end)
+        other._run(function (v)
+            b_count = b_count + 1
+            b_vals[b_count] = encode_shared(v)
+        end)
+        local n = math.min(a_count, b_count)
         for i = 1, n do
+            local a, b = decode_shared(a_vals[i]), decode_shared(b_vals[i])
             if transform then
-                emit(transform(a_vals[i], b_vals[i]))
+                emit(transform(a, b))
             else
-                emit({ a_vals[i], b_vals[i] })
+                emit({ a, b, n = 2 })
             end
         end
     end)
