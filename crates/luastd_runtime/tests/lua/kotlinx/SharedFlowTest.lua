@@ -68,22 +68,28 @@ describe("SharedFlowTest", function ()
     -- preserve the shared flow's replay/buffer semantics under overflow.
     pending("testDropLatest")
 
-    -- todo: port this Kotlin test in Lua.
+    -- defer: DROP_OLDEST cannot be verified with the current shared buffer;
+    -- slow subscribers and replay state do not follow Kotlin overflow semantics.
     pending("testDropOldest")
 
-    -- todo: port this Kotlin test in Lua.
+    -- defer: Flow has no on_subscription operator to order collector-side
+    -- emissions before upstream values arrive.
     pending("testOnSubscription")
 
-    -- todo: port this Kotlin test in Lua.
+    -- defer: Flow has no on_subscription operator; this test also verifies
+    -- subscriber cleanup when that callback throws.
     pending("onSubscriptionThrows")
 
-    -- todo: port this Kotlin test in Lua.
+    -- defer: Flow has no on_subscription barrier, and SharedFlow exposes no
+    -- replay-cache view for verifying delivery to 100 staggered subscribers.
     pending("testBigReplayManySubscribers")
 
-    -- todo: port this Kotlin test in Lua.
+    -- defer: SharedFlow lacks the bounded shared buffer and on_subscription
+    -- barrier needed to verify delivery and removal across 100 subscribers.
     pending("testBigBufferManySubscribers")
 
-    -- todo: port this Kotlin test in Lua.
+    -- defer: this model depends on nullable replay, reset_replay_cache and
+    -- consistent DROP_OLDEST behavior, which SharedFlow does not implement.
     pending("testStateFlowModel")
 
     -- todo: port this Kotlin test in Lua.
@@ -101,8 +107,23 @@ describe("SharedFlowTest", function ()
     -- todo: port this Kotlin test in Lua.
     pending("testSubscriptionCount")
 
-    -- todo: port this Kotlin test in Lua.
-    pending("testSubscriptionByFirstSuspensionInSharedFlow")
+    -- adapted: CoroutineStart.UNDISPATCHED is absent; schedule the collector
+    -- and yield until it is waiting before emitting the first value.
+    it(
+        "testSubscriptionByFirstSuspensionInSharedFlow",
+        runtest(function ()
+            local shared = flow.mutable_shared_flow()
+            local received
+            local job = async.launch(function ()
+                shared:collect(function (value) received = value end)
+            end)
+            async.yield()
+            shared:emit(1)
+            async.yield()
+            assert.is_equal(1, received)
+            job:cancel()
+        end)
+    )
 
     -- todo: port this Kotlin test in Lua.
     pending("testCancellingSubscriberAndEmitterWithNoBuffer")
