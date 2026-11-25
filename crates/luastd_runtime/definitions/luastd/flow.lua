@@ -45,10 +45,21 @@ function Flow:collect_indexed(fn) end
 ---@return luastd.flow.Flow<{ index: integer, value: T }>
 function Flow:with_index() end
 
---- Collect all values into a table.
+--- Collect all values into a new table or append them to `target`.
 ---@async
----@return table<integer, T>
-function Flow:to_list() end
+---@overload fun(self: luastd.flow.Flow<T>): table<integer, T>
+---@generic M: table<integer, T>
+---@param target M
+---@return M
+function Flow:to_list(target) end
+
+--- Collect all values into a set table, or add them to `target`.
+---@async
+---@overload fun(self: luastd.flow.Flow<T>): table<T, true>
+---@generic M: table<T, true>
+---@param target M
+---@return M
+function Flow:to_set(target) end
 
 --- The first value (or first matching `predicate`), then cancel upstream.
 ---@async

@@ -118,9 +118,15 @@ function Flow:with_index()
     end)
 end
 
-function Flow:to_list()
-    local acc = {}
+function Flow:to_list(target)
+    local acc = target or {}
     self._run(function (v) table.insert(acc, v) end)
+    return acc
+end
+
+function Flow:to_set(target)
+    local acc = target or {}
+    self._run(function (v) acc[v] = true end)
     return acc
 end
 
