@@ -104,6 +104,74 @@ function Flow:fold(initial, op) end
 ---@return T
 function Flow:reduce(op) end
 
+--- Build a map from transformed key/value pairs; later duplicate keys replace earlier values.
+---@async
+---@generic K, V
+---@param transform fun(value: T): K, V
+---@return table<K, V>
+function Flow:associate(transform) end
+
+--- Add transformed key/value pairs to `target` and return that same table.
+---@async
+---@generic K, V, M: table<K, V>
+---@param target M
+---@param transform fun(value: T): K, V
+---@return M
+function Flow:associate_to(target, transform) end
+
+--- Build a map keyed by each value's selected key; later duplicate keys replace earlier values.
+---@async
+---@generic K, V
+---@overload fun(self: luastd.flow.Flow<T>, key_selector: fun(value: T): K): table<K, T>
+---@param key_selector fun(value: T): K
+---@param value_transform? fun(value: T): V
+---@return table<K, V>
+function Flow:associate_by(key_selector, value_transform) end
+
+--- Add values keyed by a selector to `target` and return that same table.
+---@async
+---@generic K, V, M: table<K, V>
+---@overload fun(self: luastd.flow.Flow<T>, target: M, key_selector: fun(value: T): K): M
+---@param target M
+---@param key_selector fun(value: T): K
+---@param value_transform? fun(value: T): V
+---@return M
+function Flow:associate_by_to(target, key_selector, value_transform) end
+
+--- Build a map using each value as its key.
+---@async
+---@generic V
+---@param value_transform fun(value: T): V
+---@return table<T, V>
+function Flow:associate_with(value_transform) end
+
+--- Add value-keyed transformed values to `target` and return that same table.
+---@async
+---@generic M: table<T, V>, V
+---@param target M
+---@param value_transform fun(value: T): V
+---@return M
+function Flow:associate_with_to(target, value_transform) end
+
+--- Group values by a selected key, preserving source order inside each group.
+---@async
+---@generic K, V
+---@overload fun(self: luastd.flow.Flow<T>, key_selector: fun(value: T): K): table<K, table<integer, T>>
+---@param key_selector fun(value: T): K
+---@param value_transform? fun(value: T): V
+---@return table<K, table<integer, V>>
+function Flow:group_by(key_selector, value_transform) end
+
+--- Add values to groups in `target` and return that same table.
+---@async
+---@generic K, V, M: table<K, table<integer, V>>
+---@overload fun(self: luastd.flow.Flow<T>, target: M, key_selector: fun(value: T): K): M
+---@param target M
+---@param key_selector fun(value: T): K
+---@param value_transform? fun(value: T): V
+---@return M
+function Flow:group_by_to(target, key_selector, value_transform) end
+
 --- Transform each value.
 ---@generic U
 ---@param fn fun(value: T): U

@@ -180,6 +180,70 @@ function Flow:reduce(op)
     return acc
 end
 
+function Flow:associate(transform)
+    return self:associate_to({}, transform)
+end
+
+function Flow:associate_to(target, transform)
+    self._run(function (value)
+        local key, mapped = transform(value)
+        target[key] = mapped
+    end)
+    return target
+end
+
+function Flow:associate_by(key_selector, value_transform)
+    return self:associate_by_to({}, key_selector, value_transform)
+end
+
+function Flow:associate_by_to(target, key_selector, value_transform)
+    self._run(function (value)
+        local key = key_selector(value)
+        local mapped
+        if value_transform then
+            mapped = value_transform(value)
+        else
+            mapped = value
+        end
+        target[key] = mapped
+    end)
+    return target
+end
+
+function Flow:associate_with(value_transform)
+    return self:associate_with_to({}, value_transform)
+end
+
+function Flow:associate_with_to(target, value_transform)
+    self._run(function (value)
+        target[value] = value_transform(value)
+    end)
+    return target
+end
+
+function Flow:group_by(key_selector, value_transform)
+    return self:group_by_to({}, key_selector, value_transform)
+end
+
+function Flow:group_by_to(target, key_selector, value_transform)
+    self._run(function (value)
+        local key = key_selector(value)
+        local mapped
+        if value_transform then
+            mapped = value_transform(value)
+        else
+            mapped = value
+        end
+        local group = target[key]
+        if group == nil then
+            group = {}
+            target[key] = group
+        end
+        table.insert(group, mapped)
+    end)
+    return target
+end
+
 -- operators
 function Flow:map(fn)
     local up = self
