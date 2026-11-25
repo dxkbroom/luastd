@@ -1137,7 +1137,11 @@ function Flow:share_in(scope, replay)
     end
     async.with_context(scope:coroutine_context(), function () async.ensure_active() end)
     replay = replay or 0
-    local shared = flow.mutable_shared_flow(replay, 64, "SUSPEND")
+    if type(replay) ~= "number" or replay ~= replay or replay < 0 or replay == math.huge or replay ~= math.floor(replay) then
+        invalid_shared_flow_argument("replay must be a non-negative integer")
+    end
+    local extra = math.max(64 - replay, 0)
+    local shared = flow.mutable_shared_flow(replay, extra, "SUSPEND")
     scope:launch(function ()
         self._run(function (value) shared:emit(value) end)
     end)

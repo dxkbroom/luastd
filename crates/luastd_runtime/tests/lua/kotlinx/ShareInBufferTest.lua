@@ -3,12 +3,9 @@ local async = require("luastd.async")
 local flow = require("luastd.flow")
 local runtest = require("luastd_test").runtest
 
-describe("ShareInBufferTest", function ()
-    -- adapted: check ordered delivery and bounded producer lead for eager replay=0
-    -- sharing; the scheduler does not reproduce Kotlin's exact batch trace.
-    it("testReplay0DefaultBuffer", runtest(function (t)
+local function check_buffer(replay, expected_capacity)
+    return runtest(function (t)
         local n = 200
-        local capacity = 64
         local produced = 0
         local received = 0
         local max_lead = 0
@@ -19,26 +16,25 @@ describe("ShareInBufferTest", function ()
             end
             emit(-1)
         end)
-        local shared = source:share_in(async.current())
+        local shared = source:share_in(async.current(), replay)
         shared:take(n):collect(function (value)
             assert.is_equal(received, value)
             received = received + 1
             max_lead = math.max(max_lead, produced - received)
         end)
         assert.is_equal(n, received)
-        assert.is_true(max_lead > 1)
-        assert.is_true(max_lead <= capacity + 1)
+        assert.is_equal(expected_capacity, max_lead)
         t:finish(1)
-    end))
+    end)
+end
 
-    -- defer: current share_in allocates replay + 64 slots, so replay=1 makes
-    -- the effective shared buffer 65 instead of Kotlin's padded 64.
-    pending("testReplay1DefaultBuffer")
-
-    -- defer: current share_in adds replay to its default 64 slots instead of
-    -- using max(replay, default capacity) when replay is greater than zero.
-    pending("testReplay10DefaultBuffer")
-    pending("testReplay100DefaultBuffer")
+describe("ShareInBufferTest", function ()
+    -- adapted: assert actual ordered delivery and producer lead rather than
+    -- Kotlin's scheduler-specific expect trace.
+    it("testReplay0DefaultBuffer", check_buffer(0, 64))
+    it("testReplay1DefaultBuffer", check_buffer(1, 64))
+    it("testReplay10DefaultBuffer", check_buffer(10, 64))
+    it("testReplay100DefaultBuffer", check_buffer(100, 100))
 
     -- defer: buffer fusion does not carry an upstream default buffer through
     -- share_in; source and shared buffers remain separate.
