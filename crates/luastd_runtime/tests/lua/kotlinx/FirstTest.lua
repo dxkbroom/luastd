@@ -3,8 +3,25 @@
 -- dispatcher), so the cancellation cases are deferred.
 
 local flow = require("luastd.flow")
+local async = require("luastd.async")
 local luastd_test = require("luastd_test")
 local runtest = luastd_test.runtest
+
+local function scoped_source(cancelled, latch_slot)
+    return flow.new(function (emit)
+        local latch = async.channel(0)
+        latch_slot.value = latch
+        async.scope(function (scope)
+            local child = scope:launch(function ()
+                latch:send(true)
+                async.delay(math.huge)
+            end)
+            child:on_cancel(function () cancelled.value = true end)
+            emit(1)
+            emit(2)
+        end)
+    end)
+end
 
 -- kotlin: kotlinx-coroutines-core/common/test/flow/terminal/FirstTest.kt@1.11.0
 describe("FirstTest", function ()
@@ -41,8 +58,22 @@ describe("FirstTest", function ()
         end)
     )
 
-    -- defer: cancellation-driven upstream cancellation needs scheduler integration.
-    pending("testFirstCancellation")
+    -- adapted: use a structured child cancellation hook to verify that first's
+    -- BREAK short-circuit stops the upstream scope after selecting one value.
+    it(
+        "testFirstCancellation",
+        runtest(function ()
+            local cancelled = { value = false }
+            local latch_slot = {}
+            local source = scoped_source(cancelled, latch_slot)
+            local result = source:first(function ()
+                latch_slot.value:receive()
+                return true
+            end)
+            assert.is_equal(1, result)
+            assert.is_true(cancelled.value)
+        end)
+    )
 
     it(
         "testEmptyFlow",
@@ -52,8 +83,27 @@ describe("FirstTest", function ()
         end)
     )
 
-    -- defer: upstream cancellation on error requires scope integration.
-    pending("testErrorCancelsUpstream")
+    -- adapted: verify reducer predicate failure identity and upstream child
+    -- cleanup, then collect again to confirm the cold source restarts.
+    it(
+        "testErrorCancelsUpstream",
+        runtest(function ()
+            local cancelled = { value = false }
+            local latch_slot = {}
+            local source = scoped_source(cancelled, latch_slot)
+            local failure = luastd_test.TestException()
+            local ok, err = pcall(function ()
+                source:first(function ()
+                    latch_slot.value:receive()
+                    error(failure, 0)
+                end)
+            end)
+            assert.is_false(ok)
+            assert.is_true(rawequal(failure, err))
+            assert.is_true(cancelled.value)
+            assert.is_equal(1, source:first())
+        end)
+    )
 
     it(
         "testFirstOrNull",
@@ -72,8 +122,22 @@ describe("FirstTest", function ()
         end)
     )
 
-    -- defer: cancellation-driven upstream cleanup needs scheduler integration.
-    pending("testFirstOrNullCancellation")
+    -- adapted: first_or_null uses the same short-circuit; verify its value and
+    -- upstream child cleanup with the scheduler's cancellation hook.
+    it(
+        "testFirstOrNullCancellation",
+        runtest(function ()
+            local cancelled = { value = false }
+            local latch_slot = {}
+            local source = scoped_source(cancelled, latch_slot)
+            local result = source:first_or_null(function ()
+                latch_slot.value:receive()
+                return true
+            end)
+            assert.is_equal(1, result)
+            assert.is_true(cancelled.value)
+        end)
+    )
 
     it(
         "testFirstOrNullWithEmptyFlow",
@@ -103,8 +167,27 @@ describe("FirstTest", function ()
         end)
     )
 
-    -- defer: predicate failure must cancel a structured upstream scope.
-    pending("testFirstOrNullWhenErrorCancelsUpstream")
+    -- adapted: verify first_or_null propagates the predicate error unchanged,
+    -- cancels the upstream child, and permits a later cold collection.
+    it(
+        "testFirstOrNullWhenErrorCancelsUpstream",
+        runtest(function ()
+            local cancelled = { value = false }
+            local latch_slot = {}
+            local source = scoped_source(cancelled, latch_slot)
+            local failure = luastd_test.TestException()
+            local ok, err = pcall(function ()
+                source:first_or_null(function ()
+                    latch_slot.value:receive()
+                    error(failure, 0)
+                end)
+            end)
+            assert.is_false(ok)
+            assert.is_true(rawequal(failure, err))
+            assert.is_true(cancelled.value)
+            assert.is_equal(1, source:first_or_null())
+        end)
+    )
 
     -- adapted: a Lua table has identity equality, matching the tested identity
     -- preservation without Kotlin's custom equals/hashCode implementation.
@@ -120,9 +203,11 @@ describe("FirstTest", function ()
         end)
     )
 
-    -- defer: abort flow exception handling not yet ported.
+    -- defer: the private BREAK sentinel is not exposed as the internal
+    -- AbortFlowException that this Kotlin case catches as cancellation.
     pending("testAbortFlowException")
 
-    -- defer: cancellation propagation not yet ported.
+    -- defer: ADR 0005 makes cancellation uncatchable by Lua pcall, so the
+    -- Kotlin test's cancellation-finalizer flow cannot continue as written.
     pending("testFirstThrowOnCancellation")
 end)
