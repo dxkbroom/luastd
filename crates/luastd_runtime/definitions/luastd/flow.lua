@@ -114,7 +114,7 @@ function Flow:associate(transform) end
 --- Add transformed key/value pairs to `target` and return that same table.
 ---@async
 ---@generic K, V, M: table<K, V>
----@param target M
+---@param target    M
 ---@param transform fun(value: T): K, V
 ---@return M
 function Flow:associate_to(target, transform) end
@@ -123,7 +123,7 @@ function Flow:associate_to(target, transform) end
 ---@async
 ---@generic K, V
 ---@overload fun(self: luastd.flow.Flow<T>, key_selector: fun(value: T): K): table<K, T>
----@param key_selector fun(value: T): K
+---@param key_selector     fun(value: T): K
 ---@param value_transform? fun(value: T): V
 ---@return table<K, V>
 function Flow:associate_by(key_selector, value_transform) end
@@ -132,8 +132,8 @@ function Flow:associate_by(key_selector, value_transform) end
 ---@async
 ---@generic K, V, M: table<K, V>
 ---@overload fun(self: luastd.flow.Flow<T>, target: M, key_selector: fun(value: T): K): M
----@param target M
----@param key_selector fun(value: T): K
+---@param target           M
+---@param key_selector     fun(value: T): K
 ---@param value_transform? fun(value: T): V
 ---@return M
 function Flow:associate_by_to(target, key_selector, value_transform) end
@@ -148,7 +148,7 @@ function Flow:associate_with(value_transform) end
 --- Add value-keyed transformed values to `target` and return that same table.
 ---@async
 ---@generic M: table<T, V>, V
----@param target M
+---@param target          M
 ---@param value_transform fun(value: T): V
 ---@return M
 function Flow:associate_with_to(target, value_transform) end
@@ -157,7 +157,7 @@ function Flow:associate_with_to(target, value_transform) end
 ---@async
 ---@generic K, V
 ---@overload fun(self: luastd.flow.Flow<T>, key_selector: fun(value: T): K): table<K, table<integer, T>>
----@param key_selector fun(value: T): K
+---@param key_selector     fun(value: T): K
 ---@param value_transform? fun(value: T): V
 ---@return table<K, table<integer, V>>
 function Flow:group_by(key_selector, value_transform) end
@@ -166,8 +166,8 @@ function Flow:group_by(key_selector, value_transform) end
 ---@async
 ---@generic K, V, M: table<K, table<integer, V>>
 ---@overload fun(self: luastd.flow.Flow<T>, target: M, key_selector: fun(value: T): K): M
----@param target M
----@param key_selector fun(value: T): K
+---@param target           M
+---@param key_selector     fun(value: T): K
 ---@param value_transform? fun(value: T): V
 ---@return M
 function Flow:group_by_to(target, key_selector, value_transform) end
@@ -239,6 +239,13 @@ function Flow:transform(fn) end
 ---@param ms number
 ---@return luastd.flow.Flow<T>
 function Flow:debounce(ms) end
+
+--- Raise a Timeout error if upstream is inactive for `ms` milliseconds.
+--- The timeout restarts after each upstream value; `ms <= 0` fails before
+--- upstream starts. An upstream error is forwarded unchanged.
+---@param ms number
+---@return luastd.flow.Flow<T>
+function Flow:timeout(ms) end
 
 --- Emit only values distinct from the previous.
 ---@generic K

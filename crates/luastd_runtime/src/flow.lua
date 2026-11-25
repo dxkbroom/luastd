@@ -95,34 +95,29 @@ function Flow:first(pred)
 end
 
 function Flow:single(pred)
-    local acc = {}
+    local count = 0
+    local result
     self._run(function (v)
-        if pred == nil or pred(v) then table.insert(acc, v) end
+        if pred == nil or pred(v) then
+            count = count + 1
+            if count == 1 then result = v end
+        end
     end)
-    if #acc ~= 1 then
+    if count ~= 1 then
         error("expected a single value")
     end
-    return acc[1]
+    return result
 end
 
 function Flow:last()
     local result = nil
     local found = false
     self._run(function (v)
-            result = v
-            found = true
-        end)
+        result = v
+        found = true
+    end)
     if not found then error("NoSuchElementException") end
     return result
-end
-
-function Flow:single()
-    local acc = {}
-    self._run(function (v) table.insert(acc, v) end)
-    if #acc ~= 1 then
-        error("expected a single value")
-    end
-    return acc[1]
 end
 
 function Flow:count()
@@ -390,6 +385,53 @@ function Flow:debounce(ms)
             end)
             ch:debounce(ms):each(emit)
         end)
+    end)
+end
+
+function Flow:timeout(ms)
+    local up = self
+    return new_flow(function (emit)
+        -- Reuse async.with_timeout's argument validation and immediate-timeout
+        -- behavior. A timeout of zero or less must not start upstream.
+        if type(ms) ~= "number" or ms ~= ms or ms <= 0 then
+            async.with_timeout(ms, function () end)
+        end
+
+        -- The tagged envelope preserves nil values and distinguishes an
+        -- upstream Timeout error from this operator's inactivity timeout.
+        local channel = async.produce(function (out)
+            local ok, err = pcall(function ()
+                up._run(function (value)
+                    out:send({ kind = "value", value = value })
+                end)
+            end)
+            if ok then
+                out:send({ kind = "complete" })
+            else
+                out:send({ kind = "error", error = err })
+            end
+        end, 0)
+
+        local source_finished = false
+        async.finally(function ()
+            while true do
+                local event = async.with_timeout(ms, function ()
+                    return channel:receive()
+                end)
+                if event.kind == "value" then
+                    emit(event.value)
+                elseif event.kind == "error" then
+                    source_finished = true
+                    error(event.error, 0)
+                else
+                    source_finished = true
+                    return
+                end
+            end
+        end,
+            function ()
+                if not source_finished then channel:cancel() end
+            end)
     end)
 end
 
