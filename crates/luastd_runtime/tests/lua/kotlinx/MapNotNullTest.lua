@@ -1,25 +1,34 @@
 -- Port of kotlinx.coroutines' MapNotNullTest.
----@diagnostic disable: await-in-sync
 
 local flow = require("luastd.flow")
+local luastd_test = require("luastd_test")
+local runtest = luastd_test.runtest
 
 -- kotlin: kotlinx-coroutines-core/common/test/flow/operators/MapNotNullTest.kt@1.11.0
 describe("MapNotNullTest", function ()
-    it("testMap", function ()
-        local r = flow.from({ 1, 2, 3 }):map_not_null(function (x)
-            if x == 2 then return nil end
-            return x * 2
-        end):to_list()
-        assert.is_equal(2, #r)
-        assert.is_equal(2, r[1])
-        assert.is_equal(6, r[2])
-    end)
+    it(
+        "testMap",
+        runtest(function ()
+            local source = flow.new(function (emit)
+                emit(1)
+                emit(nil)
+                emit(2)
+            end)
+            local result = source:map_not_null(function (value) return value end):to_list()
+            assert.same({ 1, 2 }, result)
+        end)
+    )
 
-    it("testEmptyFlow", function ()
-        local r = flow.empty():map_not_null(function (x) return x end):to_list()
-        assert.is_equal(0, #r)
-    end)
+    it(
+        "testEmptyFlow",
+        runtest(function ()
+            local r = flow.empty():map_not_null(function (x) return x end):to_list()
+            assert.is_equal(0, #r)
+        end)
+    )
 
-    -- defer: error propagation semantics.
+    -- defer: map_not_null errors are recovered by catch, but the synchronous
+    -- source emit path currently returns normally instead of cancelling its
+    -- nested async scope and running upstream cleanup before recovery.
     pending("testErrorCancelsUpstream")
 end)
