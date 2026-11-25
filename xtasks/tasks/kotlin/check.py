@@ -1,6 +1,7 @@
 #!/usr/bin/env -S uv run --project xtasks python
 # MISE description="Report which kotlinx.coroutines tests the Kotlin ports cover (ported/adapted/deprecated/not-applicable/defer/todo/missing)"
 # USAGE flag "--check" help="Exit 1 if a Kotlin test is missing from its port or a port names a test Kotlin does not have"
+# USAGE flag "--deprecated" help="Include deprecated Kotlin tests (hidden by default)"
 # USAGE flag "--class <name>" help="Check one Kotlin test class"
 # USAGE arg "[FILES]..." help="Port files (default: crates/luastd_runtime/tests/lua/kotlinx/*.lua)"
 """Report coverage of the kotlinx.coroutines test ports."""
@@ -33,6 +34,13 @@ KOTLINX = Path(os.environ.get("KOTLINX_DIR") or ROOT.parent / "kotlinx.coroutine
 
 def main(argv: list[str]) -> int:
     check = os.environ.get("usage_check") == "true" or "--check" in argv
+    include_deprecated = (
+        os.environ.get("usage_deprecated") == "true" or "--deprecated" in argv
+    )
+    display_statuses = ["ported", "adapted"]
+    if include_deprecated:
+        display_statuses.append("deprecated")
+    display_statuses.extend(["not-applicable", "defer", "todo", "missing"])
     class_name = os.environ.get("usage_class")
     files = [Path(file) for file in os.environ.get("usage_files", "").split() if file]
     if not files:
@@ -66,7 +74,13 @@ def main(argv: list[str]) -> int:
                 source, port.cls, abstract_methods, kotlin_sources
             )
             mapped = {test.name: (test.status, test.reason) for test in port.tests}
-            for name in kotlin_tests:
+            visible_tests = [
+                name
+                for name in kotlin_tests
+                if include_deprecated
+                or mapped.get(name, ("missing",))[0] != "deprecated"
+            ]
+            for name in visible_tests:
                 status, reason = mapped.get(name, ("missing", ""))
                 totals[status] = totals.get(status, 0) + 1
                 problems += status == "missing"
@@ -78,38 +92,21 @@ def main(argv: list[str]) -> int:
             counts = {
                 status: sum(
                     1
-                    for name in kotlin_tests
+                    for name in visible_tests
                     if mapped.get(name, ("missing",))[0] == status
                 )
-                for status in (
-                    "ported",
-                    "adapted",
-                    "deprecated",
-                    "not-applicable",
-                    "defer",
-                    "todo",
-                    "missing",
-                )
+                for status in display_statuses
             }
             print(
                 "  "
                 + ", ".join(f"{count} {status}" for status, count in counts.items())
-                + f" of {len(kotlin_tests)}"
+                + f" of {len(visible_tests)}"
             )
     if totals:
         print(
             "total: "
             + ", ".join(
-                f"{totals.get(status, 0)} {status}"
-                for status in (
-                    "ported",
-                    "adapted",
-                    "deprecated",
-                    "not-applicable",
-                    "defer",
-                    "todo",
-                    "missing",
-                )
+                f"{totals.get(status, 0)} {status}" for status in display_statuses
             )
         )
     if class_name and not found_class:
