@@ -162,6 +162,25 @@ function Flow:first(pred)
     return result
 end
 
+function Flow:first_or_null(pred)
+    local result = nil
+    local found = false
+    local ok, err = pcall(function ()
+        self._run(function (v)
+            if found then return end
+            if pred == nil or pred(v) then
+                result = v
+                found = true
+                error(BREAK)
+            end
+        end)
+    end)
+    if not ok and not rawequal(err, BREAK) then
+        error(err, 0)
+    end
+    return result
+end
+
 function Flow:single(pred)
     local count = 0
     local result

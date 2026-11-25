@@ -67,6 +67,12 @@ function Flow:to_set(target) end
 ---@return T
 function Flow:first(predicate) end
 
+--- The first value or first predicate match, returning nil if none exists.
+---@async
+---@param predicate? fun(value: T): boolean
+---@return T?
+function Flow:first_or_null(predicate) end
+
 --- The single value (or single matching `predicate`).
 ---@async
 ---@param predicate? fun(value: T): boolean
