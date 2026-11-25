@@ -1,5 +1,4 @@
 -- kotlin: kotlinx-coroutines-core/common/test/channels/ChannelReceiveCatchingTest.kt@1.11.0
----@diagnostic disable: await-in-sync
 
 local async = require("luastd.async")
 local luastd_test = require("luastd_test")
@@ -52,9 +51,23 @@ describe("ChannelReceiveCatchingTest", function ()
         end)
     )
 
-    -- defer: cancellation is uncatchable in luastd; there is no
-    -- receiveCatching result to inspect after channel cancellation.
-    pending("testCancelChannel")
+    -- adapted: cancellation cannot be returned as a catchable receive result;
+    -- assert the channel's closed state instead of inspecting ChannelResult.
+    it(
+        "testCancelChannel",
+        runtest(function (t)
+            local channel = async.channel()
+            async.launch(function ()
+                t:expect(2)
+                channel:cancel()
+            end)
+            t:expect(1)
+            async.yield()
+            assert.is_true(channel:is_closed())
+            assert.is_true(channel:is_closed_for_receive())
+            t:finish(3)
+        end)
+    )
 
     -- defer: luastd has no ChannelResult value to send or inspect.
     pending("testReceiveResultChannel")
