@@ -495,10 +495,16 @@ function Flow:timeout(ms)
 end
 
 function Flow:distinct_until_changed(key, are_equal)
+    local requested_key, requested_are_equal = key, are_equal
+    local config = rawget(self, "_distinct_until_changed_config")
+    if config and config.key == requested_key and config.are_equal == requested_are_equal then
+        return self
+    end
+
     key = key or function (x) return x end
     are_equal = are_equal or function (a, b) return a == b end
     local up = self
-    return new_flow(function (emit)
+    local result = new_flow(function (emit)
         local prev = nil
         local has = false
         up._run(function (v)
@@ -515,6 +521,13 @@ function Flow:distinct_until_changed(key, are_equal)
             end
         end)
     end)
+    -- Store the caller's callbacks, not the defaults created above, so repeated
+    -- default, key-selector, and equality configurations can be fused by identity.
+    result._distinct_until_changed_config = {
+        key = requested_key,
+        are_equal = requested_are_equal
+    }
+    return result
 end
 
 local function buffered(base, capacity, is_default)

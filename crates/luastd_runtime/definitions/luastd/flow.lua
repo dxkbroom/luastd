@@ -280,6 +280,8 @@ function Flow:timeout(ms) end
 
 --- Emit only values distinct from the previous.
 ---@generic K
+---@overload fun(self: luastd.flow.Flow<T>): luastd.flow.Flow<T>
+---@overload fun(self: luastd.flow.Flow<T>, key: nil, are_equal: fun(a: T, b: T): boolean): luastd.flow.Flow<T>
 ---@param key?       fun(value: T): K
 ---@param are_equal? fun(a: K, b: K): boolean
 ---@return luastd.flow.Flow<T>
