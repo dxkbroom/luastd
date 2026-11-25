@@ -1,5 +1,4 @@
 -- Port of kotlinx.coroutines' SemaphoreTest.
----@diagnostic disable: await-in-sync
 
 local async = require("luastd.async")
 local luastd_test = require("luastd_test")
@@ -235,6 +234,7 @@ describe("SemaphoreTest", function ()
         end
     end)
 
-    -- defer: JS miscompilation reproducer; not applicable.
+    -- not-applicable: KT-58685 reproduces a Kotlin/JS IR compiler bug in the
+    -- inlined `finally` emitted for `withPermit`; Lua cannot exercise compiler code generation.
     pending("testWithPermitJsMiscompilation")
 end)
